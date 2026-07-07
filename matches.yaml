@@ -1,0 +1,14 @@
+# Hand-confirmed market pairs. These are the ONLY pairs --execute will trade
+# unless you pass --allow-fuzzy-exec.
+#
+# Format:  <kalshi ticker>: <polymarket condition id OR slug>
+#
+# Find candidates with:  python -m arb matches
+# Then VERIFY THE RESOLUTION RULES MATCH on both sites before adding a pair
+# here — same event, same threshold, same deadline, same resolution source.
+#
+# Example (fake — replace with real pairs):
+# matches:
+#   KXFEDDECISION-26SEP-H25: fed-cuts-rates-by-25-bps-september-2026
+
+matches: {}

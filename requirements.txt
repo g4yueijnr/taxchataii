@@ -1,0 +1,7 @@
+requests>=2.31
+rapidfuzz>=3.0
+python-dotenv>=1.0
+PyYAML>=6.0
+cryptography>=42.0
+# Only needed for --execute (live trading on Polymarket):
+py-clob-client>=0.17
