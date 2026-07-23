@@ -619,3 +619,25 @@ def test_maker_not_competitive_on_tight_book_against_fair():
         assert sides["yes"].price <= book.best_yes_bid   # not improving the bid
     if "no" in sides:
         assert 100 - sides["no"].price >= book.best_yes_ask  # not improving ask
+
+
+def test_sniper_rejects_implausible_edge():
+    """The -99c disaster: model says 99.5% but market offers the side at 20c
+    (78c 'edge'). That's our model being wrong, not free money -> skip."""
+    from mm.settlement import Sniper
+    cfg = Config()
+    sn = Sniper(cfg)
+    now = time.time()
+    mkt = MarketInfo("T", 0.1, now + 30, now - 870)
+    sn.tracker(mkt).samples = {i: 0.102 for i in range(30)}   # ~certain up
+    spot = make_spot(price=0.102)
+    book = Book("T")
+    # YES offered at 22c while model says ~100 -> 78c edge -> must reject.
+    book.apply_snapshot({"yes": [[5, 20]], "no": [[78, 50]]})
+    assert sn.evaluate(mkt, book, spot, strike_is_proxy=False, now=now) is None
+    # A sane ~9c edge (YES at 90c) is still taken.
+    sn2 = Sniper(cfg)
+    sn2.tracker(mkt).samples = {i: 0.102 for i in range(30)}
+    book2 = Book("T")
+    book2.apply_snapshot({"yes": [[5, 20]], "no": [[10, 50]]})  # YES ask 90c
+    assert sn2.evaluate(mkt, book2, spot, strike_is_proxy=False, now=now) is not None

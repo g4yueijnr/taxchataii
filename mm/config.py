@@ -118,6 +118,9 @@ class Config:
     sniper_window_s: int = 90          # active this close to settlement
     sniper_min_prob: float = 0.985     # probability floor to take a side
     sniper_min_ev_cents: float = 1.5   # EV after taker fee must clear this
+    sniper_max_ev_cents: float = 12.0  # REJECT above this: a huge "edge" means
+                                       # our model disagrees violently with the
+                                       # market, and the market is right
     sniper_size: int = 10              # max contracts per snipe
 
     # --- fees (see mm/fees.py; override if Kalshi's schedule changes) ----

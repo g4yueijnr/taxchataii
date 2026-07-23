@@ -126,6 +126,11 @@ class Sniper:
             ev = prob * 100.0 - ask - fee
             if ev < cfg.sniper_min_ev_cents:
                 continue
+            # Implausible edge => our model is wrong, not the market. The
+            # -99c snipe disasters were all "78c edge" trades near the money
+            # where our spot source diverged from Kalshi's settlement index.
+            if ev > cfg.sniper_max_ev_cents:
+                continue
             taken.add(side)
             return CrossExit(side, size, ask, f"snipe p={prob:.3f} ev={ev:.1f}c")
         return None
