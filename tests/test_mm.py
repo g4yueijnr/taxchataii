@@ -347,19 +347,18 @@ def test_pick_requires_more_edge_on_proxy_strike():
     assert not proxy_picks    # proxy strike demands 2c more edge
 
 
-def test_extreme_zone_reduce_only_quote():
+def test_extreme_zone_no_new_quotes():
+    """Pinned binary (book mid > 95): the pure maker makes no market there
+    and holds any inventory for settlement rather than adding risk."""
     cfg = Config()
     eng = QuoteEngine(cfg)
     mkt, now = make_mkt()
-    spot = make_spot(price=0.10045)   # ITM: fair ~97 (95 < fair < 99)
+    spot = make_spot(price=0.10045)
     book = Book(mkt.ticker)
-    book.apply_snapshot({"yes": [[95, 10]], "no": [[2, 10]]})
+    book.apply_snapshot({"yes": [[95, 10]], "no": [[2, 10]]})  # mid 96.5
     d = eng.compute(mkt, book, spot, 5, 60.0, now)
     assert d.reason == "extreme_prob"
-    assert len(d.desired) == 1 and d.desired[0].side == "no"
-    assert d.desired[0].size == 5          # reduce-only: capped at position
-    px = 100 - d.desired[0].price
-    assert px > 95                          # selling near $1, above fair
+    assert not d.desired
 
 
 def test_sim_cross_is_level_aware():

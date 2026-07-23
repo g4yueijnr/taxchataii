@@ -166,45 +166,44 @@ class QuoteEngine:
         if pick:
             d.crosses.append(pick)
 
-        # ---------------- two-sided quotes around the MARKET -------------
-        # Center on the book mid (where the market actually is), tilted a
-        # bounded amount toward our fair. Quoting around a fair that
-        # disagrees with the book by 20c+ (common near the money, where our
-        # spot source differs from Kalshi's settlement index) just parks us
-        # off-market with zero fills. As a maker we earn the spread; we
-        # don't need to be right about direction, only to stay near the
-        # market and manage inventory.
+        # ---------------- touch-joining market maker ---------------------
+        # Real market making, no directional view: rest just inside the best
+        # bid AND the best ask, capture whatever spread exists, and manage
+        # inventory purely by skewing both quotes against the position. The
+        # book is treated as truth — our fair value played no useful part in
+        # centering (near the money it disagrees with the market and only
+        # pushed us off-book, so we never filled). Adverse-selection defence
+        # is the vol-spike / stale-spot guards above plus the scratch/flatten
+        # exits, not a fat fair-value buffer that keeps us from ever trading.
         if book.yes and book.no and not book.crossed:
-            mid = book.mid
-            lean = fair - mid
-            lean = max(-cfg.max_fair_lean_cents,
-                       min(cfg.max_fair_lean_cents, lean)) * cfg.fair_lean_frac
-            center = mid + lean
-        else:
-            center = fair
-
-        half = (cfg.base_edge_cents
-                + maker_fee_per_contract(int(round(center)) or 1, cfg.maker_fee_mult)
-                + cfg.as_vol_mult * fv_vol)
-        skew = cfg.inventory_skew_cents * (position / max(cfg.max_position, 1))
-
-        bid_target = center - half - skew        # our YES buy
-        ask_target = center + half - skew        # our YES sell == NO buy at 100-ask
-
-        bid = int(math.floor(bid_target))
-        ask = int(math.ceil(ask_target))
-
-        # Price-improve: sit 1c inside the current best, but never give up
-        # more edge than the target allows, and never cross.
-        if cfg.improve_tick:
-            if book.yes and book.best_yes_bid + 1 <= bid:
-                bid = book.best_yes_bid + 1
-            if book.no and book.best_yes_ask - 1 >= ask:
-                ask = book.best_yes_ask - 1
-        if book.no:
-            bid = min(bid, book.best_yes_ask - 1)   # resting, not taking
-        if book.yes:
+            if book.mid < 5 or book.mid > 95:
+                d.reason = "extreme_prob"     # binary pinned; nothing to make
+                return d
+            inside_bid = book.best_yes_bid + 1
+            inside_ask = book.best_yes_ask - 1
+            if inside_ask - inside_bid < cfg.min_capture_cents:
+                # No room to improve; sit AT the touch and capture the raw
+                # spread if it still clears the min-capture (fee) threshold.
+                inside_bid = book.best_yes_bid
+                inside_ask = book.best_yes_ask
+            skew = int(round(cfg.inventory_skew_cents * position
+                             / max(cfg.max_position, 1)))
+            bid = inside_bid - skew           # long -> lower both, sell eager
+            ask = inside_ask - skew
+            bid = min(bid, book.best_yes_ask - 1)   # never cross / take
             ask = max(ask, book.best_yes_bid + 1)
+        else:
+            # No book yet: seed a market from fair value so there's a two-
+            # sided quote for others to trade against.
+            if fair < 5 or fair > 95:
+                d.reason = "extreme_prob"
+                return d
+            half = (cfg.base_edge_cents
+                    + maker_fee_per_contract(int(round(fair)) or 1, cfg.maker_fee_mult)
+                    + cfg.as_vol_mult * fv_vol)
+            skew = cfg.inventory_skew_cents * (position / max(cfg.max_position, 1))
+            bid = int(math.floor(fair - half - skew))
+            ask = int(math.ceil(fair + half - skew))
 
         if ask - bid < cfg.min_capture_cents:
             d.reason = "spread_too_tight"
@@ -212,28 +211,6 @@ class QuoteEngine:
 
         bid_ok = 1 <= bid <= 99
         ask_ok = 1 <= ask <= 99
-        # Deep favorites/longshots: fee-adjusted maker edge dies at extremes
-        # and a 1c ladder can't express the required edge — stop adding risk,
-        # but keep a reduce-only quote working so a winning position can be
-        # sold near $1 instead of waiting for the forced flatten.
-        if fair < 5 or fair > 95:
-            d.reason = "extreme_prob"
-            if fair > 95 and position > 0:
-                px = min(99, max(ask, int(math.ceil(fair)) + 1))
-                if book.yes:
-                    px = max(px, book.best_yes_bid + 1)
-                if fair < px <= 99:
-                    d.desired.append(
-                        DesiredOrder("no", 100 - px, min(cfg.quote_size, position)))
-            elif fair < 5 and position < 0:
-                px = max(1, min(bid, int(math.floor(fair)) - 1))
-                if book.no:
-                    px = min(px, book.best_yes_ask - 1)
-                if 1 <= px < fair:
-                    d.desired.append(
-                        DesiredOrder("yes", px, min(cfg.quote_size, -position)))
-            return d
-
         yes_size = min(cfg.quote_size, cfg.max_position - position)
         no_size = min(cfg.quote_size, cfg.max_position + position)
         if bid_ok and yes_size > 0:
