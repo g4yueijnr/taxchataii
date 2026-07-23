@@ -113,3 +113,28 @@ def test_risk_halt_cancels_quotes(tmp_path):
     assert bot.risk.halted
     assert not bot.om.orders_for(TICKER)
     bot.journal.close()
+
+
+def test_dashboard_renders_with_trades(tmp_path):
+    from mm.health import _dashboard_html, _status_body
+    bot = make_bot(tmp_path)
+    now = time.time()
+    info = MarketInfo(TICKER, 0.1, now + 600, now - 300)
+    bot.active[TICKER] = ActiveMarket(bot.cfg.coins[0], info)
+    bot._ticker_coin[TICKER] = "DOGE"
+    warm_spot(bot, now)
+    book = bot.ws.book(TICKER)
+    book.apply_snapshot({"yes": [[30, 50]], "no": [[30, 50]]})
+    asyncio.run(bot._eval_once())
+    bid = bot.om.orders_for(TICKER)["yes"].price
+    bot.om.on_public_trade({"market_ticker": TICKER, "count": 5,
+                            "yes_price": bid - 1, "taker_side": "no"})
+
+    page = _dashboard_html(bot)
+    assert "PAPER" in page and "DOGE" in page and "maker" in page
+    assert f"{bid}c" in page                      # the fill's entry price
+    body = _status_body(bot)
+    assert body["version"] and body["pnl"]["fills"] == 1
+    fills = bot.journal.recent_fills(10)
+    assert fills[0]["price_cents"] == bid and fills[0]["count"] == 5
+    bot.journal.close()

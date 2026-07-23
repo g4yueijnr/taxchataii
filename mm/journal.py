@@ -66,6 +66,15 @@ class Journal:
                         (markout_cents, fill_id))
         self.db.commit()
 
+    def recent_fills(self, limit: int = 100) -> list[dict]:
+        cols = ("ts", "coin", "ticker", "side", "action", "count",
+                "price_cents", "yes_equiv_qty", "fee_cents", "is_taker",
+                "reason", "fair_at_fill", "markout_cents")
+        rows = self.db.execute(
+            f"SELECT {', '.join(cols)} FROM fills ORDER BY id DESC LIMIT ?",
+            (limit,)).fetchall()
+        return [dict(zip(cols, r)) for r in rows]
+
     def coin_stats(self, since_ts: float = 0.0) -> dict[str, dict]:
         rows = self.db.execute(
             "SELECT coin, COUNT(*), SUM(count), SUM(fee_cents), "

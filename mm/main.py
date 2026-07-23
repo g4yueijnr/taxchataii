@@ -383,8 +383,9 @@ class Bot:
     # ------------------------------------------------------------ lifecycle
 
     async def run(self) -> None:
-        log.info("starting: dry_run=%s coins=%s", self.cfg.dry_run,
-                 [c.symbol for c in self.cfg.coins])
+        from . import __version__
+        log.info("starting v%s: dry_run=%s coins=%s", __version__,
+                 self.cfg.dry_run, [c.symbol for c in self.cfg.coins])
         if not self.cfg.dry_run and not self.cfg.can_trade:
             raise SystemExit(
                 "DRY_RUN=false but KALSHI_API_KEY_ID / KALSHI_PRIVATE_KEY missing")
