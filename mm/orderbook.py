@@ -19,15 +19,52 @@ class Book:
     last_trade_price: int = 0   # yes price of last public trade
     last_trade_ts: float = 0.0
 
+    @staticmethod
+    def _price_cents(p) -> int:
+        """Accept legacy integer cents (42) and current dollar strings
+        ('0.4200', sub-penny possible) — Kalshi migrated formats."""
+        if isinstance(p, str) and "." in p:
+            return int(round(float(p) * 100))
+        if isinstance(p, float) and p <= 1.0:
+            return int(round(p * 100))
+        return int(p)
+
+    @classmethod
+    def _parse_levels(cls, raw) -> dict[int, int]:
+        out: dict[int, int] = {}
+        for lvl in raw or []:
+            price = cls._price_cents(lvl[0])
+            size = int(float(lvl[1]))
+            if 1 <= price <= 99 and size > 0:
+                out[price] = size
+        return out
+
     def apply_snapshot(self, msg: dict) -> None:
-        self.yes = {int(p): int(s) for p, s in (msg.get("yes") or [])}
-        self.no = {int(p): int(s) for p, s in (msg.get("no") or [])}
+        # Formats seen in the wild: {'yes':[[42,10]]}, {'yes_dollars':
+        # [['0.4200','10.00']]}, and either nested under 'orderbook' /
+        # 'orderbook_fp' (REST) or flat (websocket).
+        src = msg.get("orderbook_fp") or msg.get("orderbook") or msg
+        yes = src.get("yes") if src.get("yes") is not None else src.get("yes_dollars")
+        no = src.get("no") if src.get("no") is not None else src.get("no_dollars")
+        self.yes = self._parse_levels(yes)
+        self.no = self._parse_levels(no)
         self.last_update = time.time()
 
     def apply_delta(self, msg: dict) -> None:
         side = msg.get("side")
-        price = int(msg.get("price", 0))
-        delta = int(msg.get("delta", 0))
+        price_raw = msg.get("price")
+        if price_raw is None:
+            price_raw = msg.get("price_dollars", msg.get("price_fp", 0))
+        delta_raw = msg.get("delta")
+        if delta_raw is None:
+            delta_raw = msg.get("delta_fp", msg.get("delta_dollars", 0))
+        try:
+            price = self._price_cents(price_raw)
+            delta = int(float(delta_raw))
+        except (TypeError, ValueError):
+            return
+        if not (1 <= price <= 99):
+            return
         ladder = self.yes if side == "yes" else self.no
         size = ladder.get(price, 0) + delta
         if size > 0:

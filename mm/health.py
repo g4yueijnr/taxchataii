@@ -200,6 +200,8 @@ def make_app(bot) -> web.Application:
             "ws_connected": bot.ws.connected,
             "ws_msg_counts": bot.ws.msg_counts,
             "ws_last_error": bot.ws.last_error,
+            "ws_last_snapshot_raw": bot.ws.last_snapshot_raw,
+            "ws_last_delta_raw": bot.ws.last_delta_raw,
             "last_data_error": bot.last_data_error,
             "subscribed_markets": sorted(bot.ws._tickers),
             "books": {

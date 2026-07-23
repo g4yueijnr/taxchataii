@@ -112,9 +112,11 @@ class KalshiRest:
         return data.get("market", {})
 
     async def get_orderbook(self, ticker: str, depth: int = 20) -> dict:
-        data = await self._request("GET", f"/markets/{ticker}/orderbook",
+        # Return the whole payload: Kalshi has shipped both 'orderbook'
+        # (integer cents) and 'orderbook_fp' (dollar strings) shapes, and
+        # Book.apply_snapshot handles either nesting.
+        return await self._request("GET", f"/markets/{ticker}/orderbook",
                                    params={"depth": depth})
-        return data.get("orderbook") or {}
 
     async def get_trades(self, ticker: str, limit: int = 50) -> list[dict]:
         data = await self._request("GET", "/markets/trades",

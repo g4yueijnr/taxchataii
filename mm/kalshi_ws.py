@@ -41,6 +41,8 @@ class KalshiWs:
         self.last_msg_ts: float = 0.0
         self.msg_counts: dict[str, int] = {}
         self.last_error: str = ""
+        self.last_snapshot_raw: str = ""   # /debug: exact wire formats
+        self.last_delta_raw: str = ""
 
     @property
     def connected(self) -> bool:
@@ -116,11 +118,13 @@ class KalshiWs:
         ticker = body.get("market_ticker", "")
 
         if mtype == "orderbook_snapshot" and ticker:
+            self.last_snapshot_raw = str(raw)[:500]
             book = self.book(ticker)
             book.apply_snapshot(body)
             if self.on_book_update:
                 await self.on_book_update(book)
         elif mtype == "orderbook_delta" and ticker:
+            self.last_delta_raw = str(raw)[:400]
             book = self.book(ticker)
             book.apply_delta(body)
             if self.on_book_update:

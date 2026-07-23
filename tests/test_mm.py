@@ -370,3 +370,45 @@ def test_sim_cross_is_level_aware():
     asyncio.run(om.cross("T", CrossExit("no", 8, 60, "flatten"), book))
     assert pb.pos("T").net == -5
     assert 40 not in book.yes               # liquidity consumed
+
+
+# ------------------------------------------------- kalshi orderbook formats
+
+def test_book_parses_dollar_format_from_debug_screenshot():
+    """Exact shape Kalshi returned live on 2026-07-23: orderbook_fp with
+    yes_dollars/no_dollars as decimal-dollar strings."""
+    b = Book("KXDOGE15M")
+    b.apply_snapshot({"orderbook_fp": {
+        "no_dollars": [["0.1000", "8035.00"], ["0.2000", "47.00"]],
+        "yes_dollars": [["0.7000", "107.14"], ["0.7900", "30.00"]],
+    }})
+    assert b.best_yes_bid == 79
+    assert b.best_no_bid == 20
+    assert b.best_yes_ask == 80
+    assert b.yes[70] == 107 and b.no[10] == 8035
+
+
+def test_book_parses_flat_dollar_websocket_shape():
+    b = Book("T")
+    b.apply_snapshot({"yes_dollars": [["0.4200", "10.00"]],
+                      "no_dollars": [["0.5500", "5.00"]]})
+    assert b.best_yes_bid == 42 and b.best_yes_ask == 45
+
+
+def test_book_legacy_integer_format_still_works():
+    b = Book("T")
+    b.apply_snapshot({"orderbook": {"yes": [[40, 10]], "no": [[57, 8]]}})
+    assert b.best_yes_bid == 40 and b.best_yes_ask == 43
+
+
+def test_delta_accepts_dollar_prices():
+    b = Book("T")
+    b.apply_snapshot({"yes": [[40, 10]], "no": [[57, 8]]})
+    b.apply_delta({"side": "yes", "price_dollars": "0.4100", "delta": 5})
+    assert b.best_yes_bid == 41
+    b.apply_delta({"side": "yes", "price_dollars": "0.4100", "delta": -5})
+    assert b.best_yes_bid == 40
+    # Sub-penny price rounds to a whole cent instead of crashing; the 3
+    # contracts land on either neighbor of 57.5c.
+    b.apply_delta({"side": "no", "price_dollars": "0.5750", "delta": 3})
+    assert b.no.get(57, 0) + b.no.get(58, 0) == 11
