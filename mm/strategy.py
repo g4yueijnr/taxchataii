@@ -84,7 +84,7 @@ class QuoteEngine:
                 return fair - f
         return 0.0
 
-    def last_fair(self, ticker: str, now: float, max_age: float = 30.0) -> float:
+    def last_fair(self, ticker: str, now: float, max_age: float = 90.0) -> float:
         hist = self._fair_hist.get(ticker, [])
         if hist and now - hist[-1][0] <= max_age:
             return hist[-1][1]
@@ -159,6 +159,8 @@ class QuoteEngine:
         # Spot leads Kalshi by seconds. When a resting quote is priced far
         # enough through our fair value to pay the taker fee, the vol
         # buffer, and a profit margin, take it before it's repriced.
+        # Runs AFTER every suppression guard — taking is the aggressive
+        # side of the strategy and deserves the strictest conditions.
         pick = self._maybe_pick(mkt, book, position, fair, fv_vol,
                                 strike_is_proxy, now)
         if pick:
@@ -233,6 +235,18 @@ class QuoteEngine:
         cfg = self.cfg
         if not cfg.pick_enabled:
             return None
+        # Early window: the crowd prices the opening drift before our model
+        # has this window's context — a "mispriced" book is them, not us.
+        if mkt.open_ts and now - mkt.open_ts < cfg.pick_min_open_seconds:
+            return None
+        # Probability extremes: tail model error dominates the edge there.
+        lo, hi = cfg.pick_fair_band
+        if not (lo <= fair <= hi):
+            return None
+        # Picks build inventory aggressively; cap them at half the book so
+        # the maker always keeps room to work.
+        if abs(position) >= max(cfg.max_position // 2, 1):
+            return None
         extra = cfg.pick_proxy_penalty_cents if strike_is_proxy else 0.0
         # Falling-knife guard: a "cheap" ask while fair itself is dropping
         # is usually the market repricing faster than our model, not free
@@ -295,17 +309,20 @@ class QuoteEngine:
                            t_left: float, fair: float, force: bool) -> list[CrossExit]:
         if position != 0 and (force or t_left < self.cfg.flatten_seconds):
             c = self._cross_out(book, position, fair, "flatten")
-            return [c] if c.size > 0 else []
+            return [c] if c and c.size > 0 else []
         return []
 
     def _cross_out(self, book: Book, position: int, fair: float,
-                   reason: str) -> CrossExit:
+                   reason: str) -> CrossExit | None:
         """Exit by crossing — but never further than max_exit_slippage
         through fair. Settlement pays out ~fair on average, so dumping a
         25c-fair position into a 2c bid is a donation; if no liquidity
         exists within the cap, hold and let settlement (or a later book)
-        do better.
+        do better. With NO fair at all we don't trade — a blind exit at
+        whatever the book shows is strictly worse than settling.
         """
+        if fair <= 0:
+            return None
         slip = self.cfg.max_exit_slippage_cents
         if position > 0:
             # Long YES: buy NO to net out. NO ask price = 100 - best_yes_bid.

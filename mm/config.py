@@ -78,9 +78,13 @@ class Config:
 
     # --- stale-quote picker (mid-window latency taker) --------------------
     pick_enabled: bool = True
-    pick_min_edge_cents: float = 3.0   # edge beyond taker fee + fv_vol buffer
-    pick_cooldown_s: float = 4.0       # per market+side between picks
+    pick_min_edge_cents: float = 4.0   # edge beyond taker fee + fv_vol buffer
+    pick_cooldown_s: float = 8.0       # per market+side between picks
     pick_proxy_penalty_cents: float = 2.0  # extra edge required on proxy strikes
+    pick_min_open_seconds: int = 90    # no picks early in a window: the crowd
+                                       # prices the open drift before our model
+    pick_fair_band: tuple = (15.0, 85.0)  # no picks at extremes: model error
+                                          # dominates the binary's tails
 
     # --- timing guards (seconds before market close) ---------------------
     no_quote_seconds: int = 150   # stop posting new quotes (60s settle avg + buffer)

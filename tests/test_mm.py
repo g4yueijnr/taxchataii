@@ -18,9 +18,9 @@ def make_spot(price=0.1, sigma_per_sec=1e-4):
     return s
 
 
-def make_mkt(t_left=600.0, strike=0.1, now=None):
+def make_mkt(t_left=600.0, strike=0.1, now=None, open_age=300.0):
     now = now or time.time()
-    return MarketInfo("KXDOGE15M-TEST", strike, now + t_left, now - 60), now
+    return MarketInfo("KXDOGE15M-TEST", strike, now + t_left, now - open_age), now
 
 
 # ------------------------------------------------------------------- fees
@@ -330,10 +330,9 @@ def test_pick_requires_more_edge_on_proxy_strike():
     eng = QuoteEngine(cfg)
     mkt, now = make_mkt()
     book = Book(mkt.ticker)
-    # Ask at 42 (~8c through fair): enough for a real strike, and with the
-    # proxy penalty it should still clear (8 > 3 + fv_vol~2.9 + fee + 2 is
-    # borderline) — use 40 to be decisive, then verify threshold ordering.
-    book.apply_snapshot({"yes": [[30, 10]], "no": [[58, 25]]})
+    # Ask at 40 (~10c through fair): clears the real-strike requirement
+    # (~8.6c) but not the proxy requirement (~10.6c) — threshold ordering.
+    book.apply_snapshot({"yes": [[30, 10]], "no": [[60, 25]]})
     d_real = eng.compute(mkt, book, make_spot(), 0, None, now)
     eng2 = QuoteEngine(cfg)
     d_proxy = eng2.compute(mkt, book, make_spot(), 0, None, now,
@@ -500,3 +499,50 @@ def test_pick_skips_falling_knife():
     eng2._record_fair(mkt.ticker, 50.0, now - 30)
     d2 = eng2.compute(mkt, book, make_spot(), 0, None, now)
     assert [c for c in d2.crosses if c.reason.startswith("pick")]
+
+
+# ------------------------------------------------------- pick discipline
+
+def test_no_picks_in_young_window():
+    cfg = Config()
+    eng = QuoteEngine(cfg)
+    mkt, now = make_mkt(open_age=30)   # window opened 30s ago
+    book = Book(mkt.ticker)
+    book.apply_snapshot({"yes": [[30, 10]], "no": [[62, 25]]})  # juicy 38c ask
+    d = eng.compute(mkt, book, make_spot(), 0, None, now)
+    assert not [c for c in d.crosses if c.reason.startswith("pick")]
+
+
+def test_no_picks_at_probability_extremes():
+    cfg = Config()
+    eng = QuoteEngine(cfg)
+    mkt, now = make_mkt()
+    spot = make_spot(price=0.1006)     # fair ~99: deep in the tail
+    book = Book(mkt.ticker)
+    book.apply_snapshot({"yes": [[99, 10]], "no": [[15, 10]]})
+    d = eng.compute(mkt, book, spot, 0, None, now)
+    assert not [c for c in d.crosses if c.reason.startswith("pick")]
+
+
+def test_picks_capped_at_half_inventory():
+    cfg = Config()
+    eng = QuoteEngine(cfg)
+    mkt, now = make_mkt()
+    book = Book(mkt.ticker)
+    book.apply_snapshot({"yes": [[30, 10]], "no": [[62, 25]]})
+    d = eng.compute(mkt, book, make_spot(), cfg.max_position // 2, 40.0, now)
+    assert not [c for c in d.crosses if c.reason.startswith("pick")]
+
+
+def test_no_blind_exit_without_fair():
+    """The DOGE 1c dump: flatten with fair unknown must HOLD, not sell."""
+    cfg = Config()
+    eng = QuoteEngine(cfg)
+    mkt, now = make_mkt(t_left=80)
+    spot = make_spot()
+    spot.last_update = now - 10        # spot stale -> no fresh fair
+    book = Book(mkt.ticker)
+    book.apply_snapshot({"yes": [[1, 500]], "no": [[98, 10]]})
+    d = eng.compute(mkt, book, spot, 20, 30.0, now)   # long 20, no fair known
+    assert d.reason == "spot_stale"
+    assert not d.crosses                                # held for settlement
