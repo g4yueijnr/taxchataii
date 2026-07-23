@@ -1,7 +1,7 @@
 # Kalshi 15-Minute Crypto Market Maker
 
 Quotes both sides of Kalshi's 15-minute up/down crypto markets (DOGE, BNB,
-SOL, XRP by default — any `KX*15M` series works) to capture the wide
+ZEC, NEAR by default — any `KX*15M` series works) to capture the wide
 bid/ask spreads on the alt-coin books, with the whole design built around
 one fact: **your bid usually fills because the price just moved through
 it.** Naive "bid 1¢ over, flip at the ask" bots donate money to whoever is
@@ -82,7 +82,7 @@ DRY_RUN=false KALSHI_API_KEY_ID=... KALSHI_PRIVATE_KEY_PATH=key.pem python -m mm
 
 | Var | Default | Meaning |
 |---|---|---|
-| `MM_COINS` | `DOGE,BNB,SOL,XRP` | Coins to quote (`BTC,ETH,ZEC,NEAR` also wired) |
+| `MM_COINS` | `DOGE,BNB,ZEC,NEAR` | Coins to quote (`BTC,ETH,SOL,XRP` also wired) |
 | `MM_QUOTE_SIZE` | 5 | Contracts per side |
 | `MM_MAX_POSITION` | 20 | Max net contracts per market |
 | `MM_BASE_EDGE_CENTS` | 1.0 | Profit floor per side beyond fees/buffers |
@@ -96,9 +96,9 @@ DRY_RUN=false KALSHI_API_KEY_ID=... KALSHI_PRIVATE_KEY_PATH=key.pem python -m mm
 
 ## Honest expectations
 
-- ZEC and NEAR **don't have Kalshi 15M series today** (BTC, ETH, SOL, XRP,
-  BNB, HYPE, DOGE do). They're pre-wired: if `KXZEC15M`/`KXNEAR15M` ever
-  list, adding them to `MM_COINS` just works.
+- On startup the bot logs a warning for any configured series it can't
+  find on the exchange and keeps trading the rest — so a delisted or
+  renamed series degrades gracefully instead of crashing.
 - Wider spread = less competition, but also fewer fills. Expect many
   windows with zero trades; the P&L comes from being consistently on the
   right side of the fills you do get.

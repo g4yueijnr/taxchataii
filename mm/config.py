@@ -120,7 +120,7 @@ def load_config() -> Config:
     elif pem_path and Path(pem_path).exists():
         cfg.kalshi_private_key_pem = Path(pem_path).read_bytes()
 
-    coin_list = os.environ.get("MM_COINS", "DOGE,BNB,SOL,XRP")
+    coin_list = os.environ.get("MM_COINS", "DOGE,BNB,ZEC,NEAR")
     for sym in [c.strip().upper() for c in coin_list.split(",") if c.strip()]:
         if sym in DEFAULT_COINS:
             cfg.coins.append(DEFAULT_COINS[sym])
