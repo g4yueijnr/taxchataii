@@ -39,6 +39,8 @@ class KalshiWs:
         self._cmd_id = 0
         self._connected = asyncio.Event()
         self.last_msg_ts: float = 0.0
+        self.msg_counts: dict[str, int] = {}
+        self.last_error: str = ""
 
     @property
     def connected(self) -> bool:
@@ -85,15 +87,22 @@ class KalshiWs:
             backoff = min(backoff * 2, 30.0)
 
     async def _subscribe(self, tickers: list[str]) -> None:
-        channels = list(PUBLIC_CHANNELS)
-        if self.rest.can_trade:
-            channels.append("fill")
+        # Market-scoped channels and the account-scoped fill channel go in
+        # SEPARATE commands — mixing them can invalidate the whole subscribe.
         self._cmd_id += 1
         await self._ws.send(json.dumps({
             "id": self._cmd_id,
             "cmd": "subscribe",
-            "params": {"channels": channels, "market_tickers": tickers},
+            "params": {"channels": list(PUBLIC_CHANNELS),
+                       "market_tickers": tickers},
         }))
+        if self.rest.can_trade:
+            self._cmd_id += 1
+            await self._ws.send(json.dumps({
+                "id": self._cmd_id,
+                "cmd": "subscribe",
+                "params": {"channels": ["fill"]},
+            }))
 
     async def _handle(self, raw: str | bytes) -> None:
         self.last_msg_ts = time.time()
@@ -102,6 +111,7 @@ class KalshiWs:
         except (ValueError, TypeError):
             return
         mtype = msg.get("type")
+        self.msg_counts[str(mtype)] = self.msg_counts.get(str(mtype), 0) + 1
         body = msg.get("msg") or {}
         ticker = body.get("market_ticker", "")
 
@@ -126,4 +136,5 @@ class KalshiWs:
             if self.on_fill:
                 await self.on_fill(body)
         elif mtype == "error":
+            self.last_error = json.dumps(msg)[:300]
             log.warning("kalshi ws error: %s", msg)

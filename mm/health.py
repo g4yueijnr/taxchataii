@@ -191,6 +191,34 @@ def make_app(bot) -> web.Application:
         limit = min(int(req.query.get("limit", 100)), 1000)
         return web.json_response(bot.journal.recent_fills(limit))
 
+    async def debug(_req: web.Request) -> web.Response:
+        """Raw truth: websocket message counts, per-book depth, and a live
+        unfiltered REST orderbook response — for diagnosing empty books."""
+        out: dict = {
+            "version": __version__,
+            "data_mode": bot.data_mode,
+            "ws_connected": bot.ws.connected,
+            "ws_msg_counts": bot.ws.msg_counts,
+            "ws_last_error": bot.ws.last_error,
+            "last_data_error": bot.last_data_error,
+            "subscribed_markets": sorted(bot.ws._tickers),
+            "books": {
+                t: {"yes_levels": len(b.yes), "no_levels": len(b.no),
+                    "best_bid": b.best_yes_bid, "best_ask": b.best_yes_ask,
+                    "age_s": round(time.time() - b.last_update, 1)
+                    if b.last_update else None}
+                for t, b in bot.ws.books.items()},
+        }
+        if bot.active:
+            t = min(bot.active, key=lambda x: bot.active[x].info.close_ts)
+            try:
+                raw = await bot.rest._request(
+                    "GET", f"/markets/{t}/orderbook", params={"depth": 10})
+                out["rest_orderbook_raw"] = {"ticker": t, "response": raw}
+            except Exception as e:
+                out["rest_orderbook_raw"] = {"ticker": t, "error": str(e)}
+        return web.json_response(out)
+
     async def stats(_req: web.Request) -> web.Response:
         day_start = dt.datetime.combine(dt.date.today(), dt.time.min).timestamp()
         return web.json_response({
@@ -203,6 +231,7 @@ def make_app(bot) -> web.Application:
     app.router.add_get("/healthz", healthz)
     app.router.add_get("/trades", trades)
     app.router.add_get("/stats", stats)
+    app.router.add_get("/debug", debug)
     return app
 
 
