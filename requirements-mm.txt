@@ -1,0 +1,6 @@
+# Runtime deps for the market maker only (keeps the Railway image slim —
+# the arb tool's extras like py-clob-client aren't needed here).
+aiohttp>=3.9
+websockets>=13.0
+cryptography>=42.0
+python-dotenv>=1.0

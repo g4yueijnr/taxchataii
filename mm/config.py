@@ -1,0 +1,145 @@
+"""Configuration: environment variables first, optional mm.yaml overrides.
+
+Everything risk-related has a conservative default. DRY_RUN defaults ON —
+the bot paper-trades until you explicitly set DRY_RUN=false.
+"""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    v = os.environ.get(name)
+    if v is None:
+        return default
+    return v.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _env_float(name: str, default: float) -> float:
+    v = os.environ.get(name)
+    return float(v) if v not in (None, "") else default
+
+
+def _env_int(name: str, default: int) -> int:
+    v = os.environ.get(name)
+    return int(v) if v not in (None, "") else default
+
+
+@dataclass
+class CoinConfig:
+    """Per-coin wiring: Kalshi series ticker + spot feed."""
+    symbol: str                 # e.g. "DOGE"
+    series_ticker: str          # e.g. "KXDOGE15M"
+    spot_source: str            # "coinbase" | "binance" | "kraken"
+    spot_symbol: str            # e.g. "DOGE-USD" (coinbase) / "dogeusdt" (binance)
+
+
+# Default wiring for Kalshi's 15-minute crypto series. Spot sources are chosen
+# to overlap with the CF Benchmarks index constituents (Coinbase/Kraken) where
+# the coin is listed there; BNB only trades with real depth on Binance.
+DEFAULT_COINS: dict[str, CoinConfig] = {
+    "DOGE": CoinConfig("DOGE", "KXDOGE15M", "coinbase", "DOGE-USD"),
+    "SOL": CoinConfig("SOL", "KXSOL15M", "coinbase", "SOL-USD"),
+    "XRP": CoinConfig("XRP", "KXXRP15M", "coinbase", "XRP-USD"),
+    "BNB": CoinConfig("BNB", "KXBNB15M", "binance", "bnbusdt"),
+    "BTC": CoinConfig("BTC", "KXBTC15M", "coinbase", "BTC-USD"),
+    "ETH": CoinConfig("ETH", "KXETH15M", "coinbase", "ETH-USD"),
+    "ZEC": CoinConfig("ZEC", "KXZEC15M", "kraken", "ZEC/USD"),
+    "NEAR": CoinConfig("NEAR", "KXNEAR15M", "coinbase", "NEAR-USD"),
+}
+
+
+@dataclass
+class Config:
+    # --- credentials -----------------------------------------------------
+    kalshi_api_key_id: str = ""
+    kalshi_private_key_pem: bytes = b""
+
+    # --- what to trade ---------------------------------------------------
+    coins: list[CoinConfig] = field(default_factory=list)
+    dry_run: bool = True
+
+    # --- quoting ---------------------------------------------------------
+    quote_size: int = 5           # contracts per side
+    max_position: int = 20        # max net contracts per market (either sign)
+    base_edge_cents: float = 1.0  # minimum half-spread beyond fees/buffers
+    min_capture_cents: int = 2    # min distance between our bid and our ask
+    as_vol_mult: float = 2.0      # adverse-selection buffer = mult * fair-value vol
+    inventory_skew_cents: float = 2.0   # extra skew at full inventory
+    improve_tick: bool = True     # step 1c inside the current best when profitable
+    requote_threshold_cents: float = 1.0  # move quotes when target shifts >= this
+
+    # --- timing guards (seconds before market close) ---------------------
+    no_quote_seconds: int = 150   # stop posting new quotes (60s settle avg + buffer)
+    flatten_seconds: int = 100    # start crossing out of inventory
+    min_open_seconds: int = 10    # don't quote a window until it's this old
+
+    # --- adverse-selection circuit breakers ------------------------------
+    spot_stale_seconds: float = 3.0    # pull quotes if the spot feed goes quiet
+    vol_spike_mult: float = 3.5        # pull quotes when 30s vol > mult * baseline
+    vol_spike_cooldown: float = 20.0   # seconds to stay out after a spike
+    scratch_cents: int = 3             # cross out if fair moves this far against inventory
+
+    # --- fees (see mm/fees.py; override if Kalshi's schedule changes) ----
+    taker_fee_mult: float = 0.07
+    maker_fee_mult: float = 0.0175     # 25% of taker per July 2026 schedule
+
+    # --- risk ------------------------------------------------------------
+    max_gross_dollars: float = 200.0   # max total collateral at risk
+    daily_loss_limit_dollars: float = 50.0
+    min_balance_cents: int = 500       # halt if balance drops below this
+
+    # --- plumbing --------------------------------------------------------
+    write_rate_per_sec: float = 4.0    # order create/cancel throttle
+    discovery_interval: float = 15.0   # how often to look for the next window
+    port: int = 8080                   # health/status HTTP port
+
+    @property
+    def can_trade(self) -> bool:
+        return bool(self.kalshi_api_key_id and self.kalshi_private_key_pem)
+
+
+def load_config() -> Config:
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        pass
+
+    cfg = Config()
+    cfg.kalshi_api_key_id = os.environ.get("KALSHI_API_KEY_ID", "")
+
+    # Railway-friendly: accept the PEM either inline or as a file path.
+    pem_inline = os.environ.get("KALSHI_PRIVATE_KEY", "")
+    pem_path = os.environ.get("KALSHI_PRIVATE_KEY_PATH", "")
+    if pem_inline:
+        cfg.kalshi_private_key_pem = pem_inline.replace("\\n", "\n").encode()
+    elif pem_path and Path(pem_path).exists():
+        cfg.kalshi_private_key_pem = Path(pem_path).read_bytes()
+
+    coin_list = os.environ.get("MM_COINS", "DOGE,BNB,SOL,XRP")
+    for sym in [c.strip().upper() for c in coin_list.split(",") if c.strip()]:
+        if sym in DEFAULT_COINS:
+            cfg.coins.append(DEFAULT_COINS[sym])
+        else:
+            # Unknown coin: assume Kalshi naming convention and Coinbase spot.
+            cfg.coins.append(CoinConfig(sym, f"KX{sym}15M", "coinbase", f"{sym}-USD"))
+
+    cfg.dry_run = _env_bool("DRY_RUN", True)
+    cfg.quote_size = _env_int("MM_QUOTE_SIZE", cfg.quote_size)
+    cfg.max_position = _env_int("MM_MAX_POSITION", cfg.max_position)
+    cfg.base_edge_cents = _env_float("MM_BASE_EDGE_CENTS", cfg.base_edge_cents)
+    cfg.min_capture_cents = _env_int("MM_MIN_CAPTURE_CENTS", cfg.min_capture_cents)
+    cfg.no_quote_seconds = _env_int("MM_NO_QUOTE_SECONDS", cfg.no_quote_seconds)
+    cfg.flatten_seconds = _env_int("MM_FLATTEN_SECONDS", cfg.flatten_seconds)
+    cfg.max_gross_dollars = _env_float("MM_MAX_GROSS_DOLLARS", cfg.max_gross_dollars)
+    cfg.daily_loss_limit_dollars = _env_float(
+        "MM_DAILY_LOSS_LIMIT", cfg.daily_loss_limit_dollars)
+    cfg.write_rate_per_sec = _env_float("MM_WRITE_RATE", cfg.write_rate_per_sec)
+    cfg.taker_fee_mult = _env_float("MM_TAKER_FEE_MULT", cfg.taker_fee_mult)
+    cfg.maker_fee_mult = _env_float("MM_MAKER_FEE_MULT", cfg.maker_fee_mult)
+    cfg.port = _env_int("PORT", cfg.port)
+    return cfg
