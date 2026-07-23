@@ -60,7 +60,9 @@ def test_full_trade_lifecycle(tmp_path):
     assert bot.positions.pos(TICKER).avg_entry == float(bid)
     assert bot.journal.coin_stats()["DOGE"]["fills"] == 1
 
-    # 3. Window nears settlement -> inventory force-flattened by crossing.
+    # 3. Window nears settlement -> inventory force-flattened by crossing
+    #    (bid within the exit-slippage cap of fair, so the cross is taken).
+    book.apply_snapshot({"yes": [[45, 50]], "no": [[30, 50]]})
     info.close_ts = now + 80
     bot.active[TICKER].dirty = True
     asyncio.run(bot._eval_once())

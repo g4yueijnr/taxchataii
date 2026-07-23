@@ -457,3 +457,46 @@ def test_seq_gap_invalidates_book():
     b = ws.book("T")
     assert not b.yes and not b.no and b.last_update == 0.0
     assert ws.gap_resyncs == 1
+
+
+# ------------------------------------------------------- exit slippage cap
+
+def test_exit_never_dumps_far_through_fair():
+    """The NEAR incident: 20 long, fair 25, only bid on the book is 2c.
+    The old code sold at 2c (-23c slippage each); now the exit is capped
+    at fair - max_exit_slippage and simply doesn't fill against that bid."""
+    cfg = Config()
+    eng = QuoteEngine(cfg)
+    mkt, now = make_mkt(t_left=80, strike=0.1)
+    spot = make_spot(price=0.09965, sigma_per_sec=8.3e-4)  # fair ~25
+    book = Book(mkt.ticker)
+    book.apply_snapshot({"yes": [[2, 500]], "no": [[70, 10]]})
+    d = eng.compute(mkt, book, spot, 20, 30.0, now)
+    assert 15 < d.fair < 35
+    assert d.crosses
+    c = d.crosses[0]
+    assert c.side == "no"
+    sell_price = 100 - c.limit_price
+    assert sell_price >= d.fair - cfg.max_exit_slippage_cents - 1
+    # And the sim refuses to fill it against the 2c bid.
+    pb = PositionBook()
+    om = SimOrderManager(cfg, pb)
+    asyncio.run(om.cross(mkt.ticker, c, book))
+    assert pb.pos(mkt.ticker).net == 0   # no fill at donation prices
+
+
+def test_pick_skips_falling_knife():
+    cfg = Config()
+    eng = QuoteEngine(cfg)
+    mkt, now = make_mkt()
+    book = Book(mkt.ticker)
+    book.apply_snapshot({"yes": [[30, 10]], "no": [[62, 25]]})  # cheap 38c ask
+    # Seed history: fair was 58 thirty seconds ago; it's ~50 now -> -8 drift.
+    eng._record_fair(mkt.ticker, 58.0, now - 30)
+    d = eng.compute(mkt, book, make_spot(), 0, None, now)
+    assert not [c for c in d.crosses if c.reason.startswith("pick")]
+    # Stable fair (fresh engine, no adverse drift): same book gets picked.
+    eng2 = QuoteEngine(cfg)
+    eng2._record_fair(mkt.ticker, 50.0, now - 30)
+    d2 = eng2.compute(mkt, book, make_spot(), 0, None, now)
+    assert [c for c in d2.crosses if c.reason.startswith("pick")]

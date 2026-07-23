@@ -92,6 +92,9 @@ class Config:
     vol_spike_mult: float = 3.5        # pull quotes when 30s vol > mult * baseline
     vol_spike_cooldown: float = 20.0   # seconds to stay out after a spike
     scratch_cents: int = 3             # cross out if fair moves this far against inventory
+    max_exit_slippage_cents: int = 10  # never exit further than this through fair;
+                                       # settlement pays ~fair, so a worse exit is a donation
+    pick_trend_guard_cents: float = 3.0  # no dip-side picks while fair fell this much in 30s
 
     # --- settlement sniper -----------------------------------------------
     sniper_enabled: bool = True

@@ -67,6 +67,28 @@ class QuoteEngine:
         self.cfg = cfg
         self._cooldown_until: dict[str, float] = {}
         self._pick_last: dict[tuple[str, str], float] = {}
+        self._fair_hist: dict[str, list[tuple[float, float]]] = {}
+
+    def _record_fair(self, ticker: str, fair: float, now: float) -> None:
+        hist = self._fair_hist.setdefault(ticker, [])
+        hist.append((now, fair))
+        cutoff = now - 60.0
+        while hist and hist[0][0] < cutoff:
+            hist.pop(0)
+
+    def _fair_drift(self, ticker: str, fair: float, now: float,
+                    lookback: float = 30.0) -> float:
+        """fair now minus fair ~lookback seconds ago (0 if unknown)."""
+        for ts, f in self._fair_hist.get(ticker, []):
+            if ts <= now - lookback * 0.8:
+                return fair - f
+        return 0.0
+
+    def last_fair(self, ticker: str, now: float, max_age: float = 30.0) -> float:
+        hist = self._fair_hist.get(ticker, [])
+        if hist and now - hist[-1][0] <= max_age:
+            return hist[-1][1]
+        return 0.0
 
     def compute(self, mkt: MarketInfo, book: Book, spot: SpotState,
                 position: int, avg_entry: float | None,
@@ -84,8 +106,9 @@ class QuoteEngine:
         # ---------------- hard guards: no fair value, no quotes ----------
         if spot.is_stale(cfg.spot_stale_seconds):
             d.reason = "spot_stale"
-            d.crosses = self._flatten_if_needed(mkt, book, position, t_left,
-                                                force=False)
+            d.crosses = self._flatten_if_needed(
+                mkt, book, position, t_left,
+                fair=self.last_fair(mkt.ticker, now), force=False)
             return d
         if mkt.strike <= 0:
             d.reason = "no_strike"
@@ -93,15 +116,16 @@ class QuoteEngine:
         if book.crossed:
             # Corrupt local book: those "great prices" are phantoms.
             d.reason = "book_invalid"
-            d.crosses = self._flatten_if_needed(mkt, book, position,
-                                                mkt.seconds_to_close(now),
-                                                force=False)
+            d.crosses = self._flatten_if_needed(
+                mkt, book, position, mkt.seconds_to_close(now),
+                fair=self.last_fair(mkt.ticker, now), force=False)
             return d
 
         sigma = spot.vol.sigma_per_sec
         fair = fair_value_cents(spot.price, mkt.strike, sigma, t_left)
         fv_vol = fair_value_vol_cents(spot.price, mkt.strike, sigma, t_left)
         d.fair, d.fv_vol = fair, fv_vol
+        self._record_fair(mkt.ticker, fair, now)
 
         # ---------------- inventory exits always run ---------------------
         if position != 0:
@@ -210,9 +234,13 @@ class QuoteEngine:
         if not cfg.pick_enabled:
             return None
         extra = cfg.pick_proxy_penalty_cents if strike_is_proxy else 0.0
+        # Falling-knife guard: a "cheap" ask while fair itself is dropping
+        # is usually the market repricing faster than our model, not free
+        # money — skip the dip side until fair stabilises.
+        drift = self._fair_drift(mkt.ticker, fair, now)
 
         # Cheap YES ask: someone is selling below fair.
-        if book.no:
+        if book.no and drift > -cfg.pick_trend_guard_cents:
             ask = book.best_yes_ask
             if 1 <= ask <= 99:
                 req = (cfg.pick_min_edge_cents + fv_vol + extra
@@ -227,7 +255,7 @@ class QuoteEngine:
                                      f"pick fair={fair:.1f} ask={ask}")
 
         # Rich YES bid: someone is buying above fair — sell to them (buy NO).
-        if book.yes:
+        if book.yes and drift < cfg.pick_trend_guard_cents:
             bid = book.best_yes_bid
             no_px = 100 - bid
             if 1 <= no_px <= 99:
@@ -253,28 +281,40 @@ class QuoteEngine:
 
         # Hard flatten before the settlement-averaging window.
         if t_left < cfg.flatten_seconds:
-            crosses.append(self._cross_out(book, position, "flatten_close"))
+            crosses.append(self._cross_out(book, position, fair, "flatten_close"))
         # Scratch: fair value moved through our entry — pay the spread to
         # stop the bleeding instead of hoping.
         elif avg_entry is not None:
             if position > 0 and fair <= avg_entry - cfg.scratch_cents:
-                crosses.append(self._cross_out(book, position, "scratch"))
+                crosses.append(self._cross_out(book, position, fair, "scratch"))
             elif position < 0 and fair >= avg_entry + cfg.scratch_cents:
-                crosses.append(self._cross_out(book, position, "scratch"))
+                crosses.append(self._cross_out(book, position, fair, "scratch"))
         return [c for c in crosses if c and c.size > 0]
 
     def _flatten_if_needed(self, mkt: MarketInfo, book: Book, position: int,
-                           t_left: float, force: bool) -> list[CrossExit]:
+                           t_left: float, fair: float, force: bool) -> list[CrossExit]:
         if position != 0 and (force or t_left < self.cfg.flatten_seconds):
-            c = self._cross_out(book, position, "flatten")
+            c = self._cross_out(book, position, fair, "flatten")
             return [c] if c.size > 0 else []
         return []
 
-    @staticmethod
-    def _cross_out(book: Book, position: int, reason: str) -> CrossExit:
+    def _cross_out(self, book: Book, position: int, fair: float,
+                   reason: str) -> CrossExit:
+        """Exit by crossing — but never further than max_exit_slippage
+        through fair. Settlement pays out ~fair on average, so dumping a
+        25c-fair position into a 2c bid is a donation; if no liquidity
+        exists within the cap, hold and let settlement (or a later book)
+        do better.
+        """
+        slip = self.cfg.max_exit_slippage_cents
         if position > 0:
             # Long YES: buy NO to net out. NO ask price = 100 - best_yes_bid.
             limit = 100 - book.best_yes_bid if book.yes else 99
+            if fair > 0:
+                allowed = 100 - max(int(math.floor(fair - slip)), 0)
+                limit = min(limit, allowed)
             return CrossExit("no", position, min(max(limit, 1), 99), reason)
         limit = book.best_yes_ask if book.no else 99
+        if fair > 0:
+            limit = min(limit, min(int(math.ceil(fair + slip)), 99))
         return CrossExit("yes", -position, min(max(limit, 1), 99), reason)
