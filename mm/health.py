@@ -204,9 +204,11 @@ def make_app(bot) -> web.Application:
             "ws_last_delta_raw": bot.ws.last_delta_raw,
             "last_data_error": bot.last_data_error,
             "subscribed_markets": sorted(bot.ws._tickers),
+            "ws_gap_resyncs": bot.ws.gap_resyncs,
             "books": {
                 t: {"yes_levels": len(b.yes), "no_levels": len(b.no),
                     "best_bid": b.best_yes_bid, "best_ask": b.best_yes_ask,
+                    "crossed": b.crossed,
                     "age_s": round(time.time() - b.last_update, 1)
                     if b.last_update else None}
                 for t, b in bot.ws.books.items()},

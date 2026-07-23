@@ -43,6 +43,8 @@ class KalshiWs:
         self.last_error: str = ""
         self.last_snapshot_raw: str = ""   # /debug: exact wire formats
         self.last_delta_raw: str = ""
+        self._seqs: dict[str, int] = {}    # per-market delta sequence
+        self.gap_resyncs: int = 0
 
     @property
     def connected(self) -> bool:
@@ -117,15 +119,30 @@ class KalshiWs:
         body = msg.get("msg") or {}
         ticker = body.get("market_ticker", "")
 
+        seq = msg.get("seq")
         if mtype == "orderbook_snapshot" and ticker:
             self.last_snapshot_raw = str(raw)[:500]
             book = self.book(ticker)
             book.apply_snapshot(body)
+            if seq is not None:
+                self._seqs[ticker] = int(seq)
             if self.on_book_update:
                 await self.on_book_update(book)
         elif mtype == "orderbook_delta" and ticker:
             self.last_delta_raw = str(raw)[:400]
             book = self.book(ticker)
+            # Sequence-gap detection: one missed delta silently corrupts
+            # the ladder (phantom levels, crossed books). On a gap, drop
+            # the book — the REST re-seed loop restores it within seconds.
+            if seq is not None:
+                last = self._seqs.get(ticker)
+                self._seqs[ticker] = int(seq)
+                if last is not None and int(seq) != last + 1:
+                    log.warning("seq gap on %s (%s -> %s): resyncing book",
+                                ticker, last, seq)
+                    book.invalidate()
+                    self.gap_resyncs += 1
+                    return
             book.apply_delta(body)
             if self.on_book_update:
                 await self.on_book_update(book)

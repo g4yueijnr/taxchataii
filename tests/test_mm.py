@@ -412,3 +412,48 @@ def test_delta_accepts_dollar_prices():
     # contracts land on either neighbor of 57.5c.
     b.apply_delta({"side": "no", "price_dollars": "0.5750", "delta": 3})
     assert b.no.get(57, 0) + b.no.get(58, 0) == 11
+
+
+# --------------------------------------------------- book integrity guards
+
+def test_crossed_book_detected_and_untradeable():
+    b = Book("T")
+    b.apply_snapshot({"yes": [[73, 10]], "no": [[42, 10]]})  # ask 58 < bid 73
+    assert b.crossed
+    cfg = Config()
+    eng = QuoteEngine(cfg)
+    mkt, now = make_mkt()
+    d = eng.compute(mkt, b, make_spot(), 0, None, now)
+    assert d.reason == "book_invalid"
+    assert not d.desired and not d.crosses
+
+    from mm.settlement import Sniper
+    sn = Sniper(cfg)
+    mkt2 = MarketInfo("T", 0.1, now + 30, now - 870)
+    sn.tracker(mkt2).samples = {i: 0.102 for i in range(30)}
+    assert sn.evaluate(mkt2, b, make_spot(price=0.102), False, now) is None
+
+
+def test_seq_gap_invalidates_book():
+    import json
+    from types import SimpleNamespace
+    from mm.kalshi_ws import KalshiWs
+    ws = KalshiWs(rest=SimpleNamespace(can_trade=False))
+
+    async def run():
+        await ws._handle(json.dumps({
+            "type": "orderbook_snapshot", "seq": 10,
+            "msg": {"market_ticker": "T", "yes": [[40, 5]], "no": [[55, 5]]}}))
+        await ws._handle(json.dumps({
+            "type": "orderbook_delta", "seq": 11,
+            "msg": {"market_ticker": "T", "side": "yes", "price": 41, "delta": 3}}))
+        assert ws.book("T").best_yes_bid == 41
+        # seq jumps 11 -> 13: a delta was lost; the book must be dropped.
+        await ws._handle(json.dumps({
+            "type": "orderbook_delta", "seq": 13,
+            "msg": {"market_ticker": "T", "side": "yes", "price": 45, "delta": 9}}))
+
+    asyncio.run(run())
+    b = ws.book("T")
+    assert not b.yes and not b.no and b.last_update == 0.0
+    assert ws.gap_resyncs == 1

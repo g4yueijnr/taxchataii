@@ -6,4 +6,4 @@ exchange feeds, capturing the bid/ask spread while defending against the
 adverse selection that kills naive spread bots.
 """
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"

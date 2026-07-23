@@ -96,6 +96,8 @@ class Sniper:
             return None
         if spot.is_stale(cfg.spot_stale_seconds):
             return None
+        if book.crossed:
+            return None   # corrupt book: the cheap ask is a phantom
         sigma = spot.vol.sigma_per_sec
         if sigma <= 0:
             return None

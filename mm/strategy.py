@@ -90,6 +90,13 @@ class QuoteEngine:
         if mkt.strike <= 0:
             d.reason = "no_strike"
             return d
+        if book.crossed:
+            # Corrupt local book: those "great prices" are phantoms.
+            d.reason = "book_invalid"
+            d.crosses = self._flatten_if_needed(mkt, book, position,
+                                                mkt.seconds_to_close(now),
+                                                force=False)
+            return d
 
         sigma = spot.vol.sigma_per_sec
         fair = fair_value_cents(spot.price, mkt.strike, sigma, t_left)

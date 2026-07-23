@@ -289,9 +289,15 @@ class Bot:
         while True:
             await asyncio.sleep(2.5)
             try:
+                now = time.time()
                 if self.ws_healthy:
+                    # Re-seed books that were invalidated (seq gap), have
+                    # gone crossed (corruption), or haven't had a full
+                    # snapshot in 60s — deltas alone must not drift forever.
                     need = [t for t in self.active
-                            if self.ws.book(t).last_update == 0]
+                            if self.ws.book(t).last_update == 0
+                            or self.ws.book(t).crossed
+                            or now - self.ws.book(t).last_snapshot > 60]
                     fallback_logged = False
                 else:
                     need = list(self.active)

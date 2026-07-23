@@ -16,6 +16,7 @@ class Book:
     yes: dict[int, int] = field(default_factory=dict)  # price -> size
     no: dict[int, int] = field(default_factory=dict)
     last_update: float = 0.0
+    last_snapshot: float = 0.0  # when we last got a FULL book state
     last_trade_price: int = 0   # yes price of last public trade
     last_trade_ts: float = 0.0
 
@@ -49,6 +50,15 @@ class Book:
         self.yes = self._parse_levels(yes)
         self.no = self._parse_levels(no)
         self.last_update = time.time()
+        self.last_snapshot = self.last_update
+
+    def invalidate(self) -> None:
+        """Drop all state (e.g. after a sequence gap): a partial book is
+        worse than no book, because stale levels look like free money."""
+        self.yes.clear()
+        self.no.clear()
+        self.last_update = 0.0
+        self.last_snapshot = 0.0
 
     def apply_delta(self, msg: dict) -> None:
         side = msg.get("side")
@@ -87,6 +97,12 @@ class Book:
     def best_yes_ask(self) -> int:
         """100 - best NO bid; 100 means no offers."""
         return 100 - self.best_no_bid if self.no else 100
+
+    @property
+    def crossed(self) -> bool:
+        """bid >= ask is impossible on the exchange — it means our local
+        copy is corrupt (missed deltas). Never trade against it."""
+        return bool(self.yes and self.no and self.best_yes_bid >= self.best_yes_ask)
 
     @property
     def spread(self) -> int:
