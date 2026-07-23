@@ -48,6 +48,20 @@ or vanish. On top of that:
 - **Kill switch** — daily loss limit, gross exposure cap, balance floor;
   trips cancel-all and stays down until restart.
 
+## How the speed edge is actually used — three layers per window
+
+| Window phase | Strategy | What speed buys |
+|---|---|---|
+| open → T−150s | **Maker**: quotes both sides of the wide spread around spot-derived fair | Re-evaluates within 100ms of any spot tick; cancels stale quotes before they're picked off; 1¢ queue-jumps |
+| open → T−150s | **Picker**: takes resting quotes left ≥3¢+fees+vol through fair after a spot move | Kalshi books reprice seconds behind spot — the picker eats stale quotes before their owners cancel |
+| T−90s → close | **Sniper**: buys near-certain sides cheap once the settlement average is mostly locked | Computes the live 60-sample settlement average faster than quoters adjust |
+
+All three layers respect the same risk gates (position caps, per-coin bench,
+kill switch), share one position book, and hand off cleanly: maker/picker
+stand down 150s out, inventory flattens by 100s, sniper owns the last 90s.
+Picks never cross a level where our own quote rests (no self-trades), and
+require 2¢ extra edge when the strike is a spot proxy.
+
 ## Settlement sniper (second edge, on by default)
 
 Settlement is the average of ~60 once-per-second index prints over the

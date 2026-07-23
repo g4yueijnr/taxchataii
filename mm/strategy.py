@@ -21,7 +21,7 @@ import time
 from dataclasses import dataclass, field
 
 from .config import Config
-from .fees import maker_fee_per_contract
+from .fees import maker_fee_per_contract, taker_fee_per_contract
 from .model import SpotState, fair_value_cents, fair_value_vol_cents
 from .orderbook import Book
 
@@ -66,10 +66,12 @@ class QuoteEngine:
     def __init__(self, cfg: Config):
         self.cfg = cfg
         self._cooldown_until: dict[str, float] = {}
+        self._pick_last: dict[tuple[str, str], float] = {}
 
     def compute(self, mkt: MarketInfo, book: Book, spot: SpotState,
                 position: int, avg_entry: float | None,
-                now: float | None = None) -> Decision:
+                now: float | None = None,
+                strike_is_proxy: bool = False) -> Decision:
         cfg = self.cfg
         now = now if now is not None else time.time()
         t_left = mkt.seconds_to_close(now)
@@ -122,6 +124,15 @@ class QuoteEngine:
             d.reason = "warming_up"
             return d
 
+        # ---------------- stale-quote picker (latency taker) -------------
+        # Spot leads Kalshi by seconds. When a resting quote is priced far
+        # enough through our fair value to pay the taker fee, the vol
+        # buffer, and a profit margin, take it before it's repriced.
+        pick = self._maybe_pick(mkt, book, position, fair, fv_vol,
+                                strike_is_proxy, now)
+        if pick:
+            d.crosses.append(pick)
+
         # ---------------- two-sided quotes around fair -------------------
         half = (cfg.base_edge_cents
                 + maker_fee_per_contract(int(round(fair)) or 1, cfg.maker_fee_mult)
@@ -153,9 +164,25 @@ class QuoteEngine:
         bid_ok = 1 <= bid <= 99
         ask_ok = 1 <= ask <= 99
         # Deep favorites/longshots: fee-adjusted maker edge dies at extremes
-        # and a 1c ladder can't express the required edge — stand down.
+        # and a 1c ladder can't express the required edge — stop adding risk,
+        # but keep a reduce-only quote working so a winning position can be
+        # sold near $1 instead of waiting for the forced flatten.
         if fair < 5 or fair > 95:
             d.reason = "extreme_prob"
+            if fair > 95 and position > 0:
+                px = min(99, max(ask, int(math.ceil(fair)) + 1))
+                if book.yes:
+                    px = max(px, book.best_yes_bid + 1)
+                if fair < px <= 99:
+                    d.desired.append(
+                        DesiredOrder("no", 100 - px, min(cfg.quote_size, position)))
+            elif fair < 5 and position < 0:
+                px = max(1, min(bid, int(math.floor(fair)) - 1))
+                if book.no:
+                    px = min(px, book.best_yes_ask - 1)
+                if 1 <= px < fair:
+                    d.desired.append(
+                        DesiredOrder("yes", px, min(cfg.quote_size, -position)))
             return d
 
         yes_size = min(cfg.quote_size, cfg.max_position - position)
@@ -166,6 +193,48 @@ class QuoteEngine:
             d.desired.append(DesiredOrder("no", 100 - ask, no_size))
         d.reason = "quoting"
         return d
+
+    # ------------------------------------------------------------------ picks
+
+    def _maybe_pick(self, mkt: MarketInfo, book: Book, position: int,
+                    fair: float, fv_vol: float, strike_is_proxy: bool,
+                    now: float) -> CrossExit | None:
+        cfg = self.cfg
+        if not cfg.pick_enabled:
+            return None
+        extra = cfg.pick_proxy_penalty_cents if strike_is_proxy else 0.0
+
+        # Cheap YES ask: someone is selling below fair.
+        if book.no:
+            ask = book.best_yes_ask
+            if 1 <= ask <= 99:
+                req = (cfg.pick_min_edge_cents + fv_vol + extra
+                       + taker_fee_per_contract(ask, cfg.taker_fee_mult))
+                size = min(cfg.quote_size, cfg.max_position - position,
+                           book.depth_at("no", 100 - ask))
+                if (fair - ask >= req and size > 0
+                        and now - self._pick_last.get((mkt.ticker, "yes"), 0)
+                        >= cfg.pick_cooldown_s):
+                    self._pick_last[(mkt.ticker, "yes")] = now
+                    return CrossExit("yes", size, ask,
+                                     f"pick fair={fair:.1f} ask={ask}")
+
+        # Rich YES bid: someone is buying above fair — sell to them (buy NO).
+        if book.yes:
+            bid = book.best_yes_bid
+            no_px = 100 - bid
+            if 1 <= no_px <= 99:
+                req = (cfg.pick_min_edge_cents + fv_vol + extra
+                       + taker_fee_per_contract(no_px, cfg.taker_fee_mult))
+                size = min(cfg.quote_size, cfg.max_position + position,
+                           book.depth_at("yes", bid))
+                if (bid - fair >= req and size > 0
+                        and now - self._pick_last.get((mkt.ticker, "no"), 0)
+                        >= cfg.pick_cooldown_s):
+                    self._pick_last[(mkt.ticker, "no")] = now
+                    return CrossExit("no", size, no_px,
+                                     f"pick fair={fair:.1f} bid={bid}")
+        return None
 
     # ------------------------------------------------------------------ exits
 

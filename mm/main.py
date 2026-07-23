@@ -286,62 +286,92 @@ class Bot:
             # running exit logic below so inventory still gets managed.
             await self.om.cancel_all()
 
+        # Markets are handled concurrently so one exchange round-trip can't
+        # delay another market's cancels.
+        todo = []
         for ticker, st in list(self.active.items()):
             spot = self.spots.state(st.coin.symbol)
-            # Re-eval on book/trade events, any spot tick since last eval,
-            # or at least 1/s for time decay.
             if (not st.dirty and spot.last_update < st.last_eval
                     and now - st.last_eval < 1.0):
                 continue
             st.dirty = False
             st.last_eval = now
-            book = self.ws.book(ticker)
-            p = self.positions.pos(ticker)
-            coin_ok = self.risk.coin_allowed(
-                st.coin.symbol, self.coin_day_net_cents(st.coin.symbol))
+            todo.append(self._eval_market(ticker, st, spot, now, ok, reason))
+        if todo:
+            results = await asyncio.gather(*todo, return_exceptions=True)
+            for r in results:
+                if isinstance(r, Exception):
+                    log.error("market eval failed: %r", r)
 
-            if st.sniped and p.net != 0:
-                # Snipes are held to settlement — keep fair fresh for the
-                # dashboard/markouts but don't let the MM flatten them.
-                st.last_reason = "sniped"
-                self._update_fair(st, spot, now)
+    async def _eval_market(self, ticker: str, st: ActiveMarket, spot,
+                           now: float, ok: bool, reason: str) -> None:
+        book = self.ws.book(ticker)
+        p = self.positions.pos(ticker)
+        coin_ok = self.risk.coin_allowed(
+            st.coin.symbol, self.coin_day_net_cents(st.coin.symbol))
+
+        # Capture the strike at the exact moment the window opens (10x/s
+        # here beats the 15s discovery loop); replaced by Kalshi's real
+        # strike as soon as it appears.
+        if (st.info.strike <= 0 and st.info.open_ts
+                and now >= st.info.open_ts and spot.price > 0):
+            st.info.strike = spot.price
+            st.strike_is_proxy = True
+            log.info("%s strike proxy captured at open: %s", ticker, spot.price)
+
+        if st.sniped and p.net != 0:
+            # Snipes are held to settlement — keep fair fresh for the
+            # dashboard/markouts but don't let the MM flatten them.
+            st.last_reason = "sniped"
+            self._update_fair(st, spot, now)
+        else:
+            decision = self.engine.compute(
+                st.info, book, spot, p.net,
+                p.avg_entry if p.net != 0 else None, now,
+                strike_is_proxy=st.strike_is_proxy)
+            st.last_fair = decision.fair
+            st.last_fv_vol = decision.fv_vol
+            if not ok:
+                st.last_reason = f"risk:{reason}"
+            elif not coin_ok:
+                st.last_reason = "coin_benched"
             else:
-                decision = self.engine.compute(
-                    st.info, book, spot, p.net,
-                    p.avg_entry if p.net != 0 else None, now)
-                st.last_fair = decision.fair
-                st.last_fv_vol = decision.fv_vol
-                if not ok:
-                    st.last_reason = f"risk:{reason}"
-                elif not coin_ok:
-                    st.last_reason = "coin_benched"
-                else:
-                    st.last_reason = decision.reason
+                st.last_reason = decision.reason
 
-                for c in decision.crosses:
-                    if isinstance(self.om, SimOrderManager):
-                        await self.om.cross(ticker, c, book)
-                    else:
-                        await self.om.cross(ticker, c)
-                if decision.desired and ok and coin_ok:
-                    await self.om.reconcile(ticker, decision.desired)
+            own = self.om.orders_for(ticker)
+            for c in decision.crosses:
+                # Exits (flatten/scratch) always run — they shed risk.
+                # Picks add risk, so they respect every gate, and never
+                # cross a level where our own quote is resting (self-trade).
+                if c.reason.startswith("pick"):
+                    if not (ok and coin_ok):
+                        continue
+                    o = own.get("yes" if c.side == "no" else "no")
+                    if o and o.price >= 100 - c.limit_price:
+                        continue
+                if isinstance(self.om, SimOrderManager):
+                    await self.om.cross(ticker, c, book)
                 else:
-                    await self.om.cancel_all(ticker)
+                    await self.om.cross(ticker, c)
+            if decision.desired and ok and coin_ok:
+                await self.om.reconcile(ticker, decision.desired)
+            else:
+                await self.om.cancel_all(ticker)
 
-            # Settlement sniper: flat markets only, near the close.
-            if (ok and coin_ok and not st.sniped and p.net == 0
-                    and st.info.seconds_to_close(now) <= self.cfg.sniper_window_s):
-                take = self.sniper.evaluate(st.info, book, spot,
-                                            st.strike_is_proxy, now)
-                if take:
-                    st.sniped = True
-                    st.last_reason = "sniping"
-                    log.info("SNIPE %s buy %s %d@%dc (%s)", ticker, take.side,
-                             take.size, take.limit_price, take.reason)
-                    if isinstance(self.om, SimOrderManager):
-                        await self.om.cross(ticker, take, book)
-                    else:
-                        await self.om.cross(ticker, take)
+        # Settlement sniper: flat markets only, near the close.
+        if (ok and coin_ok and not st.sniped and p.net == 0
+                and st.info.seconds_to_close(now) <= self.cfg.sniper_window_s):
+            take = self.sniper.evaluate(st.info, book, spot,
+                                        st.strike_is_proxy, now)
+            if take:
+                st.sniped = True
+                st.last_reason = "sniping"
+                log.info("SNIPE %s buy %s %d@%dc (%s)", ticker, take.side,
+                         take.size, take.limit_price, take.reason)
+                if isinstance(self.om, SimOrderManager):
+                    await self.om.cross(ticker, take, book)
+                else:
+                    await self.om.cross(ticker, take)
 
     def _update_fair(self, st: ActiveMarket, spot, now: float) -> None:
         from .model import fair_value_cents

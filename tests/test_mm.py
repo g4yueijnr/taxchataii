@@ -281,3 +281,92 @@ def test_position_tracks_per_market_net():
     pb.on_fill("T", "no", "buy", 5, 42, 58, fee=2.0)
     p = pb.pos("T")
     assert p.realized == 10.0 and p.fees == 4.0
+
+
+# ------------------------------------------------------------------- picker
+
+def test_pick_takes_stale_cheap_ask():
+    cfg = Config()
+    eng = QuoteEngine(cfg)
+    mkt, now = make_mkt()
+    book = Book(mkt.ticker)
+    # Fair ~50 but someone's stale offer sells YES at 38 (no bid at 62).
+    book.apply_snapshot({"yes": [[30, 10]], "no": [[62, 25]]})
+    d = eng.compute(mkt, book, make_spot(), 0, None, now)
+    picks = [c for c in d.crosses if c.reason.startswith("pick")]
+    assert picks and picks[0].side == "yes"
+    assert picks[0].limit_price == 38
+    assert picks[0].size == cfg.quote_size
+    # Cooldown: immediate second evaluation must not re-pick.
+    d2 = eng.compute(mkt, book, make_spot(), 0, None, now + 1)
+    assert not [c for c in d2.crosses if c.reason.startswith("pick")]
+
+
+def test_pick_takes_rich_bid():
+    cfg = Config()
+    eng = QuoteEngine(cfg)
+    mkt, now = make_mkt()
+    book = Book(mkt.ticker)
+    # Fair ~50 but someone bids YES at 63.
+    book.apply_snapshot({"yes": [[63, 15]], "no": [[30, 10]]})
+    d = eng.compute(mkt, book, make_spot(), 0, None, now)
+    picks = [c for c in d.crosses if c.reason.startswith("pick")]
+    assert picks and picks[0].side == "no"
+    assert picks[0].limit_price == 100 - 63
+
+
+def test_no_pick_on_fairly_priced_book():
+    cfg = Config()
+    eng = QuoteEngine(cfg)
+    mkt, now = make_mkt()
+    book = Book(mkt.ticker)
+    book.apply_snapshot({"yes": [[47, 10]], "no": [[50, 10]]})  # 47 bid / 50 ask
+    d = eng.compute(mkt, book, make_spot(), 0, None, now)
+    assert not [c for c in d.crosses if c.reason.startswith("pick")]
+
+
+def test_pick_requires_more_edge_on_proxy_strike():
+    cfg = Config()
+    eng = QuoteEngine(cfg)
+    mkt, now = make_mkt()
+    book = Book(mkt.ticker)
+    # Ask at 42 (~8c through fair): enough for a real strike, and with the
+    # proxy penalty it should still clear (8 > 3 + fv_vol~2.9 + fee + 2 is
+    # borderline) — use 40 to be decisive, then verify threshold ordering.
+    book.apply_snapshot({"yes": [[30, 10]], "no": [[58, 25]]})
+    d_real = eng.compute(mkt, book, make_spot(), 0, None, now)
+    eng2 = QuoteEngine(cfg)
+    d_proxy = eng2.compute(mkt, book, make_spot(), 0, None, now,
+                           strike_is_proxy=True)
+    real_picks = [c for c in d_real.crosses if c.reason.startswith("pick")]
+    proxy_picks = [c for c in d_proxy.crosses if c.reason.startswith("pick")]
+    assert real_picks         # 42c ask vs ~50 fair: real strike takes it
+    assert not proxy_picks    # proxy strike demands 2c more edge
+
+
+def test_extreme_zone_reduce_only_quote():
+    cfg = Config()
+    eng = QuoteEngine(cfg)
+    mkt, now = make_mkt()
+    spot = make_spot(price=0.10045)   # ITM: fair ~97 (95 < fair < 99)
+    book = Book(mkt.ticker)
+    book.apply_snapshot({"yes": [[95, 10]], "no": [[2, 10]]})
+    d = eng.compute(mkt, book, spot, 5, 60.0, now)
+    assert d.reason == "extreme_prob"
+    assert len(d.desired) == 1 and d.desired[0].side == "no"
+    assert d.desired[0].size == 5          # reduce-only: capped at position
+    px = 100 - d.desired[0].price
+    assert px > 95                          # selling near $1, above fair
+
+
+def test_sim_cross_is_level_aware():
+    cfg = Config()
+    pb = PositionBook()
+    om = SimOrderManager(cfg, pb)
+    book = Book("T")
+    book.apply_snapshot({"yes": [[40, 5], [38, 5]], "no": [[50, 10]]})
+    from mm.strategy import CrossExit
+    # Sell 8 YES with limit 60 on NO side => only the 40-bid (5) qualifies.
+    asyncio.run(om.cross("T", CrossExit("no", 8, 60, "flatten"), book))
+    assert pb.pos("T").net == -5
+    assert 40 not in book.yes               # liquidity consumed

@@ -49,17 +49,25 @@ class SimOrderManager(OrderManager):
     async def cross(self, ticker: str, c: CrossExit, book: Book | None = None) -> None:
         if book is None:
             return
-        if c.side == "no":
-            avail = sum(s for p, s in book.yes.items())  # we lift YES bids
-            no_price = c.limit_price
-            yes_price = 100 - no_price
-        else:
-            avail = sum(s for p, s in book.no.items())
-            yes_price = c.limit_price
-            no_price = 100 - yes_price
-        size = min(c.size, avail) if avail else c.size
+        # Buying `c.side` at limit L crosses the *other* side's resting bids
+        # priced >= 100 - L. Only those levels can fill us; consume them so
+        # repeated picks can't fill against the same liquidity twice.
+        ladder = book.yes if c.side == "no" else book.no
+        thresh = 100 - c.limit_price
+        crossable = sorted((p for p in ladder if p >= thresh), reverse=True)
+        size = 0
+        for p in crossable:
+            take = min(c.size - size, ladder[p])
+            ladder[p] -= take
+            if ladder[p] <= 0:
+                del ladder[p]
+            size += take
+            if size >= c.size:
+                break
         if size <= 0:
             return
+        yes_price = c.limit_price if c.side == "yes" else 100 - c.limit_price
+        no_price = 100 - yes_price
         from .fees import fee_cents
         fee = float(fee_cents(c.limit_price, size, self.cfg.taker_fee_mult))
         self.positions.on_fill(ticker, c.side, "buy", size, yes_price, no_price, fee)

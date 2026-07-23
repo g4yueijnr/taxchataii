@@ -73,7 +73,12 @@ class Config:
     as_vol_mult: float = 2.0      # adverse-selection buffer = mult * fair-value vol
     inventory_skew_cents: float = 2.0   # extra skew at full inventory
     improve_tick: bool = True     # step 1c inside the current best when profitable
-    requote_threshold_cents: float = 1.0  # move quotes when target shifts >= this
+
+    # --- stale-quote picker (mid-window latency taker) --------------------
+    pick_enabled: bool = True
+    pick_min_edge_cents: float = 3.0   # edge beyond taker fee + fv_vol buffer
+    pick_cooldown_s: float = 4.0       # per market+side between picks
+    pick_proxy_penalty_cents: float = 2.0  # extra edge required on proxy strikes
 
     # --- timing guards (seconds before market close) ---------------------
     no_quote_seconds: int = 150   # stop posting new quotes (60s settle avg + buffer)
@@ -157,6 +162,9 @@ def load_config() -> Config:
     cfg.write_rate_per_sec = _env_float("MM_WRITE_RATE", cfg.write_rate_per_sec)
     cfg.taker_fee_mult = _env_float("MM_TAKER_FEE_MULT", cfg.taker_fee_mult)
     cfg.maker_fee_mult = _env_float("MM_MAKER_FEE_MULT", cfg.maker_fee_mult)
+    cfg.pick_enabled = _env_bool("MM_PICK_ENABLED", cfg.pick_enabled)
+    cfg.pick_min_edge_cents = _env_float("MM_PICK_MIN_EDGE_CENTS",
+                                         cfg.pick_min_edge_cents)
     cfg.sniper_enabled = _env_bool("MM_SNIPER_ENABLED", cfg.sniper_enabled)
     cfg.sniper_min_prob = _env_float("MM_SNIPER_MIN_PROB", cfg.sniper_min_prob)
     cfg.sniper_size = _env_int("MM_SNIPER_SIZE", cfg.sniper_size)

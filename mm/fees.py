@@ -31,6 +31,12 @@ def maker_fee_per_contract(price_cents: int, mult: float = 0.0175) -> float:
     return mult * p * (1.0 - p) * 100.0
 
 
+def taker_fee_per_contract(price_cents: int, mult: float = 0.07) -> float:
+    """Un-rounded per-contract taker fee in cents, for edge math."""
+    p = price_cents / 100.0
+    return mult * p * (1.0 - p) * 100.0
+
+
 def round_trip_maker_cost(bid_cents: int, ask_cents: int, mult: float = 0.0175) -> float:
     """Fees in cents to buy 1 at bid and sell 1 at ask, both as maker."""
     return maker_fee_per_contract(bid_cents, mult) + maker_fee_per_contract(ask_cents, mult)
