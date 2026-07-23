@@ -44,7 +44,9 @@ DEFAULT_COINS: dict[str, CoinConfig] = {
     "DOGE": CoinConfig("DOGE", "KXDOGE15M", "coinbase", "DOGE-USD"),
     "SOL": CoinConfig("SOL", "KXSOL15M", "coinbase", "SOL-USD"),
     "XRP": CoinConfig("XRP", "KXXRP15M", "coinbase", "XRP-USD"),
-    "BNB": CoinConfig("BNB", "KXBNB15M", "binance", "bnbusdt"),
+    # OKX for BNB: Coinbase/Kraken don't list it and binance.com/us websockets
+    # are unreliable from US cloud hosts; OKX public market data isn't gated.
+    "BNB": CoinConfig("BNB", "KXBNB15M", "okx", "BNB-USDT"),
     "BTC": CoinConfig("BTC", "KXBTC15M", "coinbase", "BTC-USD"),
     "ETH": CoinConfig("ETH", "KXETH15M", "coinbase", "ETH-USD"),
     "ZEC": CoinConfig("ZEC", "KXZEC15M", "kraken", "ZEC/USD"),

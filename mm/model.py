@@ -63,7 +63,9 @@ class EwmaVol:
         Disarmed during warmup: with only a handful of ticks the baseline is
         noise and the breaker would trip on startup.
         """
-        if (self.n_samples < self.WARMUP_SAMPLES or not self._recent
+        # Thin books tick sparsely; a couple of bid/ask bounces shouldn't
+        # read as a volatility spike, so demand a real recent sample too.
+        if (self.n_samples < self.WARMUP_SAMPLES or len(self._recent) < 5
                 or self.var_per_sec <= 0):
             return 1.0
         recent = sum(v for _, v in self._recent) / len(self._recent)

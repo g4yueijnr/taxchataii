@@ -24,6 +24,7 @@ log = logging.getLogger("mm.spot")
 COINBASE_WS = "wss://ws-feed.exchange.coinbase.com"
 BINANCE_WS = os.environ.get("BINANCE_WS_BASE", "wss://stream.binance.com:9443")
 KRAKEN_WS = "wss://ws.kraken.com/v2"
+OKX_WS = "wss://ws.okx.com:8443/ws/v5/public"
 
 
 class SpotFeeds:
@@ -45,6 +46,8 @@ class SpotFeeds:
             tasks.append(self._run_binance(self._by_source["binance"]))
         if "kraken" in self._by_source:
             tasks.append(self._run_kraken(self._by_source["kraken"]))
+        if "okx" in self._by_source:
+            tasks.append(self._run_okx(self._by_source["okx"]))
         await asyncio.gather(*tasks)
 
     async def _watchdog(self) -> None:
@@ -172,3 +175,47 @@ class SpotFeeds:
                             self.states[sym].touch()
 
         await self._loop("kraken", connect)
+
+    # ---------------------------------------------------------------- okx
+
+    async def _run_okx(self, coins: list[CoinConfig]) -> None:
+        insts = {c.spot_symbol: c.symbol for c in coins}
+
+        async def connect():
+            async with websockets.connect(OKX_WS, ping_interval=None) as ws:
+                await ws.send(json.dumps({
+                    "op": "subscribe",
+                    "args": [{"channel": "tickers", "instId": i} for i in insts],
+                }))
+                log.info("okx feed up: %s", list(insts))
+
+                async def keepalive():
+                    # OKX drops connections idle >30s; it expects a text ping.
+                    while True:
+                        await asyncio.sleep(15)
+                        await ws.send("ping")
+
+                ka = asyncio.create_task(keepalive())
+                try:
+                    async for raw in ws:
+                        if raw == "pong":
+                            for sym in insts.values():
+                                self.states[sym].touch()
+                            continue
+                        msg = json.loads(raw)
+                        if msg.get("arg", {}).get("channel") != "tickers":
+                            continue
+                        for t in msg.get("data") or []:
+                            sym = insts.get(t.get("instId", ""))
+                            if not sym:
+                                continue
+                            bid = float(t.get("bidPx") or 0)
+                            ask = float(t.get("askPx") or 0)
+                            px = (bid + ask) / 2 if bid > 0 and ask > 0 else \
+                                float(t.get("last") or 0)
+                            if px > 0:
+                                self.states[sym].on_tick(px)
+                finally:
+                    ka.cancel()
+
+        await self._loop("okx", connect)
