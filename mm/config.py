@@ -72,12 +72,17 @@ class Config:
     max_position: int = 20        # max net contracts per market (either sign)
     base_edge_cents: float = 1.0  # minimum half-spread beyond fees/buffers
     min_capture_cents: int = 2    # min distance between our bid and our ask
-    as_vol_mult: float = 2.0      # adverse-selection buffer = mult * fair-value vol
+    as_vol_mult: float = 1.0      # adverse-selection buffer = mult * fair-value vol
+                                  # (tightened so the maker actually competes
+                                  #  for fills; 2.0 quoted so wide it never did)
     inventory_skew_cents: float = 2.0   # extra skew at full inventory
     improve_tick: bool = True     # step 1c inside the current best when profitable
 
     # --- stale-quote picker (mid-window latency taker) --------------------
-    pick_enabled: bool = True
+    # OFF by default: measured -2.36c avg markout over many fills — it bets
+    # our fair value beats the market's and it systematically loses. This is
+    # a pure market maker unless you opt back in with MM_PICK_ENABLED=true.
+    pick_enabled: bool = False
     pick_min_edge_cents: float = 4.0   # edge beyond taker fee + fv_vol buffer
     pick_cooldown_s: float = 8.0       # per market+side between picks
     pick_proxy_penalty_cents: float = 2.0  # extra edge required on proxy strikes
@@ -95,7 +100,9 @@ class Config:
     spot_stale_seconds: float = 3.0    # pull quotes if the spot feed goes quiet
     vol_spike_mult: float = 3.5        # pull quotes when 30s vol > mult * baseline
     vol_spike_cooldown: float = 20.0   # seconds to stay out after a spike
-    scratch_cents: int = 3             # cross out if fair moves this far against inventory
+    scratch_cents: int = 6             # cross out if fair moves this far against inventory
+                                       # (raised: +18c scratch markouts showed we
+                                       #  were realizing losses that then reverted)
     max_exit_slippage_cents: int = 10  # never exit further than this through fair;
                                        # settlement pays ~fair, so a worse exit is a donation
     pick_trend_guard_cents: float = 3.0  # no dip-side picks while fair fell this much in 30s

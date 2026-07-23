@@ -27,9 +27,16 @@ never off the Kalshi book:
 ```
 half_spread = base_edge                 (1¢ default)
             + maker_fee(price)          (~0.4¢ at mid-book)
-            + 2 × fair_value_vol(3s)    (how far truth moves before we can cancel)
+            + as_vol_mult × fair_value_vol(3s)   (1.0× default: tight enough to
+                                                  actually win fills)
             + inventory_skew
 ```
+
+**The stale-quote picker (taker side) is OFF by default** — measured negative
+markout in live paper trading (it bets our fair value beats the market's and
+loses). This ships as a pure market maker + settlement sniper. Re-enable the
+picker with `MM_PICK_ENABLED=true` only if its per-strategy markout on your
+`/stats` page is positive.
 
 `fair_value_vol` is recomputed every tick from EWMA realized vol and the
 binary's local delta — when the coin gets fast, quotes automatically widen

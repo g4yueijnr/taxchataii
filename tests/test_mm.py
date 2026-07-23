@@ -84,7 +84,7 @@ def test_quotes_symmetric_around_fair():
     assert bid < d.fair < ask
     assert ask - bid >= cfg.min_capture_cents
     # Half-spread must cover fees + adverse-selection buffer.
-    assert d.fair - bid >= cfg.base_edge_cents + 2 * d.fv_vol - 1
+    assert d.fair - bid >= cfg.base_edge_cents + cfg.as_vol_mult * d.fv_vol - 1
 
 
 def test_no_quotes_near_close_and_flatten():
@@ -287,6 +287,7 @@ def test_position_tracks_per_market_net():
 
 def test_pick_takes_stale_cheap_ask():
     cfg = Config()
+    cfg.pick_enabled = True
     eng = QuoteEngine(cfg)
     mkt, now = make_mkt()
     book = Book(mkt.ticker)
@@ -304,6 +305,7 @@ def test_pick_takes_stale_cheap_ask():
 
 def test_pick_takes_rich_bid():
     cfg = Config()
+    cfg.pick_enabled = True
     eng = QuoteEngine(cfg)
     mkt, now = make_mkt()
     book = Book(mkt.ticker)
@@ -317,6 +319,7 @@ def test_pick_takes_rich_bid():
 
 def test_no_pick_on_fairly_priced_book():
     cfg = Config()
+    cfg.pick_enabled = True
     eng = QuoteEngine(cfg)
     mkt, now = make_mkt()
     book = Book(mkt.ticker)
@@ -327,6 +330,7 @@ def test_no_pick_on_fairly_priced_book():
 
 def test_pick_requires_more_edge_on_proxy_strike():
     cfg = Config()
+    cfg.pick_enabled = True
     eng = QuoteEngine(cfg)
     mkt, now = make_mkt()
     book = Book(mkt.ticker)
@@ -486,6 +490,7 @@ def test_exit_never_dumps_far_through_fair():
 
 def test_pick_skips_falling_knife():
     cfg = Config()
+    cfg.pick_enabled = True
     eng = QuoteEngine(cfg)
     mkt, now = make_mkt()
     book = Book(mkt.ticker)
@@ -505,6 +510,7 @@ def test_pick_skips_falling_knife():
 
 def test_no_picks_in_young_window():
     cfg = Config()
+    cfg.pick_enabled = True
     eng = QuoteEngine(cfg)
     mkt, now = make_mkt(open_age=30)   # window opened 30s ago
     book = Book(mkt.ticker)
@@ -515,6 +521,7 @@ def test_no_picks_in_young_window():
 
 def test_no_picks_at_probability_extremes():
     cfg = Config()
+    cfg.pick_enabled = True
     eng = QuoteEngine(cfg)
     mkt, now = make_mkt()
     spot = make_spot(price=0.1006)     # fair ~99: deep in the tail
@@ -526,6 +533,7 @@ def test_no_picks_at_probability_extremes():
 
 def test_picks_capped_at_half_inventory():
     cfg = Config()
+    cfg.pick_enabled = True
     eng = QuoteEngine(cfg)
     mkt, now = make_mkt()
     book = Book(mkt.ticker)
