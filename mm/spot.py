@@ -38,15 +38,24 @@ class SpotFeeds:
         return self.states[symbol]
 
     async def run_forever(self) -> None:
-        tasks = []
+        tasks = [self._watchdog()]
         if "coinbase" in self._by_source:
             tasks.append(self._run_coinbase(self._by_source["coinbase"]))
         if "binance" in self._by_source:
             tasks.append(self._run_binance(self._by_source["binance"]))
         if "kraken" in self._by_source:
             tasks.append(self._run_kraken(self._by_source["kraken"]))
-        if tasks:
-            await asyncio.gather(*tasks)
+        await asyncio.gather(*tasks)
+
+    async def _watchdog(self) -> None:
+        """Make silent feeds loud: a coin with no price can't be traded."""
+        while True:
+            await asyncio.sleep(60)
+            for sym, s in self.states.items():
+                if s.price <= 0:
+                    log.warning(
+                        "NO DATA for %s — its spot feed has never ticked; "
+                        "the bot cannot trade this coin until it does", sym)
 
     async def _loop(self, name: str, connect_fn) -> None:
         backoff = 1.0
@@ -99,8 +108,14 @@ class SpotFeeds:
     async def _run_binance(self, coins: list[CoinConfig]) -> None:
         streams: dict[str, str] = {}
         for c in coins:
-            streams[f"{c.spot_symbol}@trade"] = c.symbol
-            streams[f"{c.spot_symbol}@bookTicker"] = c.symbol
+            symbols = {c.spot_symbol}
+            # binance.us names USD pairs without the T (bnbusd vs bnbusdt);
+            # subscribe to both variants — the dead one just stays silent.
+            if c.spot_symbol.endswith("usdt"):
+                symbols.add(c.spot_symbol[:-1])
+            for s in symbols:
+                streams[f"{s}@trade"] = c.symbol
+                streams[f"{s}@bookTicker"] = c.symbol
         url = f"{BINANCE_WS}/stream?streams={'/'.join(streams)}"
 
         async def connect():
