@@ -108,6 +108,16 @@ class KalshiRest:
         data = await self._request("GET", f"/markets/{ticker}")
         return data.get("market", {})
 
+    async def get_orderbook(self, ticker: str, depth: int = 20) -> dict:
+        data = await self._request("GET", f"/markets/{ticker}/orderbook",
+                                   params={"depth": depth})
+        return data.get("orderbook") or {}
+
+    async def get_trades(self, ticker: str, limit: int = 50) -> list[dict]:
+        data = await self._request("GET", "/markets/trades",
+                                   params={"ticker": ticker, "limit": limit})
+        return data.get("trades", [])
+
     async def list_series(self, category: str = "Crypto") -> list[dict]:
         data = await self._request("GET", "/series", params={"category": category})
         return data.get("series", [])

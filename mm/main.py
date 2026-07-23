@@ -82,6 +82,15 @@ class Bot:
         self._coin_day_base: dict[str, float] = {}      # coin -> net at day start
         self._coin_day: dt.date = dt.date.today()
         self._last_report = time.time()
+        self._last_trade_ts: dict[str, float] = {}      # REST tape cursor
+
+    @property
+    def ws_healthy(self) -> bool:
+        return self.ws.connected and (time.time() - self.ws.last_msg_ts) < 30
+
+    @property
+    def data_mode(self) -> str:
+        return "websocket" if self.ws_healthy else "rest_poll"
 
     @property
     def sim_equity_cents(self) -> float:
@@ -268,6 +277,62 @@ class Bot:
                 self.positions.settle(ticker, result)
                 del self._settling[ticker]
 
+    # ----------------------------------------------------- REST data fallback
+
+    async def book_sync_loop(self) -> None:
+        """Kalshi's websocket needs API-key auth even for market data. When
+        it can't deliver (keyless dry run, outage), poll books and the tape
+        over public REST at ~2.5s cadence so the bot still sees the market.
+        """
+        fallback_logged = False
+        while True:
+            await asyncio.sleep(2.5)
+            try:
+                if self.ws_healthy:
+                    need = [t for t in self.active
+                            if self.ws.book(t).last_update == 0]
+                    fallback_logged = False
+                else:
+                    need = list(self.active)
+                    if need and not fallback_logged:
+                        log.warning(
+                            "kalshi websocket unavailable — REST fallback for "
+                            "books/tape (add API keys for realtime data)")
+                        fallback_logged = True
+                need.sort(key=lambda t: self.active[t].info.close_ts)
+                for t in need[:6]:
+                    await self._sync_market_rest(t)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("book sync failed")
+
+    async def _sync_market_rest(self, ticker: str) -> None:
+        book = self.ws.book(ticker)
+        book.apply_snapshot(await self.rest.get_orderbook(ticker))
+        st = self.active.get(ticker)
+        if st:
+            st.dirty = True
+        if self.cfg.dry_run and isinstance(self.om, SimOrderManager):
+            self._feed_rest_tape(ticker, await self.rest.get_trades(ticker))
+
+    def _feed_rest_tape(self, ticker: str, trades: list[dict]) -> None:
+        """Replay only trades newer than the cursor into the sim. The first
+        poll just sets the cursor so history isn't mistaken for fresh flow."""
+        last = self._last_trade_ts.get(ticker)
+        newest = last or 0.0
+        for tr in reversed(trades):     # API returns newest first
+            ts = _parse_ts(tr.get("created_time"))
+            if last is not None and ts > last:
+                self.om.on_public_trade({
+                    "market_ticker": ticker,
+                    "count": tr.get("count", 0),
+                    "yes_price": tr.get("yes_price", 0),
+                    "taker_side": tr.get("taker_side", ""),
+                })
+            newest = max(newest, ts)
+        self._last_trade_ts[ticker] = newest or time.time()
+
     # ------------------------------------------------------------ evaluator
 
     async def eval_loop(self) -> None:
@@ -405,6 +470,7 @@ class Bot:
             asyncio.create_task(self.spots.run_forever(), name="spot"),
             asyncio.create_task(self.ws.run_forever(), name="kalshi-ws"),
             asyncio.create_task(self.discovery_loop(), name="discovery"),
+            asyncio.create_task(self.book_sync_loop(), name="book-sync"),
             asyncio.create_task(self.eval_loop(), name="eval"),
             asyncio.create_task(self.markout_loop(), name="markout"),
         ]

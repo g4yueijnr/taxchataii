@@ -138,3 +138,57 @@ def test_dashboard_renders_with_trades(tmp_path):
     fills = bot.journal.recent_fills(10)
     assert fills[0]["price_cents"] == bid and fills[0]["count"] == 5
     bot.journal.close()
+
+
+def test_rest_fallback_seeds_book_and_tape(tmp_path):
+    """When the Kalshi websocket can't deliver (keyless dry run), REST
+    polling must populate the book and replay only NEW tape into the sim."""
+    import datetime as _dt
+
+    bot = make_bot(tmp_path)
+    now = time.time()
+    info = MarketInfo(TICKER, 0.1, now + 600, now - 300)
+    bot.active[TICKER] = ActiveMarket(bot.cfg.coins[0], info)
+    bot._ticker_coin[TICKER] = "DOGE"
+    warm_spot(bot, now)
+
+    def iso(ts):
+        return _dt.datetime.utcfromtimestamp(ts).strftime(
+            "%Y-%m-%dT%H:%M:%S.000Z")
+
+    calls = {"n": 0}
+    old_trade = {"created_time": iso(now - 60), "count": 7,
+                 "yes_price": 41, "taker_side": "no"}
+    new_trade = {"created_time": iso(now + 1), "count": 3,
+                 "yes_price": 41, "taker_side": "no"}
+
+    async def fake_orderbook(ticker, depth=20):
+        return {"yes": [[40, 25]], "no": [[52, 30]]}
+
+    async def fake_trades(ticker, limit=50):
+        calls["n"] += 1
+        return [new_trade, old_trade] if calls["n"] > 1 else [old_trade]
+
+    bot.rest.get_orderbook = fake_orderbook
+    bot.rest.get_trades = fake_trades
+
+    # Poll 1: book seeded, history NOT replayed (cursor established).
+    asyncio.run(bot._sync_market_rest(TICKER))
+    book = bot.ws.book(TICKER)
+    assert book.best_yes_bid == 40 and book.best_yes_ask == 48
+    assert bot.positions.pos(TICKER).net == 0
+
+    # Quote off the freshly seeded book, then poll 2 delivers a new trade
+    # through our bid -> sim maker fill.
+    asyncio.run(bot._eval_once())
+    our_bid = bot.om.orders_for(TICKER)["yes"].price
+    assert our_bid >= 41  # improves on the 40 book bid within edge budget
+    asyncio.run(bot._sync_market_rest(TICKER))
+    assert bot.positions.pos(TICKER).net == 3
+    assert bot.positions.pos(TICKER).avg_entry == float(our_bid)
+
+    # Poll 3 with no new trades: nothing double-counted.
+    asyncio.run(bot._sync_market_rest(TICKER))
+    assert bot.positions.pos(TICKER).net == 3
+    assert bot.data_mode == "rest_poll"
+    bot.journal.close()

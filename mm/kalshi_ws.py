@@ -40,6 +40,10 @@ class KalshiWs:
         self._connected = asyncio.Event()
         self.last_msg_ts: float = 0.0
 
+    @property
+    def connected(self) -> bool:
+        return self._connected.is_set()
+
     def book(self, ticker: str) -> Book:
         if ticker not in self.books:
             self.books[ticker] = Book(ticker)
