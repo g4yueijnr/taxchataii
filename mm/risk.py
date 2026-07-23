@@ -21,6 +21,7 @@ class RiskManager:
         self._day = dt.date.today()
         self._day_start_pnl = 0.0
         self.balance_cents: int | None = None   # updated by main loop when live
+        self._benched: dict[str, dt.date] = {}  # coin -> day it was benched
 
     def _roll_day(self) -> None:
         today = dt.date.today()
@@ -52,3 +53,21 @@ class RiskManager:
         self.halted = True
         self.halt_reason = reason
         log.error("KILL SWITCH: %s — cancelling all quotes, no further trading", reason)
+
+    # ---------------------------------------------- per-coin circuit breaker
+
+    def coin_allowed(self, coin: str, day_net_cents: float) -> bool:
+        """Bench a coin for the rest of the day once it bleeds past its
+        limit. Exits/flattens still run; only new quotes stop."""
+        self._roll_day()
+        if coin in self._benched and self._benched[coin] == self._day:
+            return False
+        if day_net_cents <= -self.cfg.coin_daily_loss_limit_dollars * 100:
+            self._benched[coin] = self._day
+            log.warning("benched %s for the day (net %.0fc)", coin, day_net_cents)
+            return False
+        return True
+
+    @property
+    def benched_coins(self) -> list[str]:
+        return [c for c, d in self._benched.items() if d == self._day]

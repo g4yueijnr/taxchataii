@@ -83,6 +83,13 @@ class Config:
     vol_spike_cooldown: float = 20.0   # seconds to stay out after a spike
     scratch_cents: int = 3             # cross out if fair moves this far against inventory
 
+    # --- settlement sniper -----------------------------------------------
+    sniper_enabled: bool = True
+    sniper_window_s: int = 90          # active this close to settlement
+    sniper_min_prob: float = 0.985     # probability floor to take a side
+    sniper_min_ev_cents: float = 1.5   # EV after taker fee must clear this
+    sniper_size: int = 10              # max contracts per snipe
+
     # --- fees (see mm/fees.py; override if Kalshi's schedule changes) ----
     taker_fee_mult: float = 0.07
     maker_fee_mult: float = 0.0175     # 25% of taker per July 2026 schedule
@@ -92,10 +99,16 @@ class Config:
     daily_loss_limit_dollars: float = 50.0
     min_balance_cents: int = 500       # halt if balance drops below this
 
+    # --- per-coin circuit breaker ---------------------------------------
+    coin_daily_loss_limit_dollars: float = 15.0  # bench a coin for the day
+
     # --- plumbing --------------------------------------------------------
     write_rate_per_sec: float = 4.0    # order create/cancel throttle
     discovery_interval: float = 15.0   # how often to look for the next window
     port: int = 8080                   # health/status HTTP port
+    order_ttl_s: int = 120             # dead-man expiry on every resting order
+    order_refresh_s: int = 90          # replace resting orders before TTL
+    data_dir: str = "data"             # trade journal (SQLite) location
 
     @property
     def can_trade(self) -> bool:
@@ -141,5 +154,11 @@ def load_config() -> Config:
     cfg.write_rate_per_sec = _env_float("MM_WRITE_RATE", cfg.write_rate_per_sec)
     cfg.taker_fee_mult = _env_float("MM_TAKER_FEE_MULT", cfg.taker_fee_mult)
     cfg.maker_fee_mult = _env_float("MM_MAKER_FEE_MULT", cfg.maker_fee_mult)
+    cfg.sniper_enabled = _env_bool("MM_SNIPER_ENABLED", cfg.sniper_enabled)
+    cfg.sniper_min_prob = _env_float("MM_SNIPER_MIN_PROB", cfg.sniper_min_prob)
+    cfg.sniper_size = _env_int("MM_SNIPER_SIZE", cfg.sniper_size)
+    cfg.coin_daily_loss_limit_dollars = _env_float(
+        "MM_COIN_DAILY_LOSS_LIMIT", cfg.coin_daily_loss_limit_dollars)
+    cfg.data_dir = os.environ.get("MM_DATA_DIR", cfg.data_dir)
     cfg.port = _env_int("PORT", cfg.port)
     return cfg

@@ -63,6 +63,10 @@ class SimOrderManager(OrderManager):
         from .fees import fee_cents
         fee = float(fee_cents(c.limit_price, size, self.cfg.taker_fee_mult))
         self.positions.on_fill(ticker, c.side, "buy", size, yes_price, no_price, fee)
+        if self.on_booked:
+            qty = size if c.side == "yes" else -size
+            self.on_booked(ticker, c.side, "buy", size, c.limit_price, qty, fee,
+                           True, c.reason)
         log.info("[sim] cross %s buy %s %d@%dc (%s)", ticker, c.side, size,
                  c.limit_price, c.reason)
 
@@ -95,6 +99,10 @@ class SimOrderManager(OrderManager):
         price = yes_price if side == "yes" else no_price
         fee = float(fee_cents(price, count, self.cfg.maker_fee_mult))
         self.positions.on_fill(ticker, side, "buy", count, yes_price, no_price, fee)
+        if self.on_booked:
+            qty = count if side == "yes" else -count
+            self.on_booked(ticker, side, "buy", count, price, qty, fee,
+                           False, "maker")
         order.size -= count
         if order.size <= 0:
             self.orders_for(ticker).pop(side, None)

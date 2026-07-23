@@ -43,15 +43,29 @@ def make_app(bot) -> web.Application:
                 "daily_cents": round(bot.risk.daily_pnl_cents, 1),
                 "fills": bot.positions.fills,
             },
+            "coins": {
+                c.symbol: {"net_cents": round(bot.coin_net_cents(c.symbol), 1),
+                           "benched": c.symbol in bot.risk.benched_coins}
+                for c in bot.cfg.coins},
             "balance_cents": bot.risk.balance_cents,
             "spot": spot,
             "markets": markets,
         }
         return web.json_response(body)
 
+    async def stats(_req: web.Request) -> web.Response:
+        import datetime as dt
+        day_start = dt.datetime.combine(
+            dt.date.today(), dt.time.min).timestamp()
+        return web.json_response({
+            "all_time": bot.journal.coin_stats(),
+            "today": bot.journal.coin_stats(since_ts=day_start),
+        })
+
     app = web.Application()
     app.router.add_get("/", status)
     app.router.add_get("/healthz", status)
+    app.router.add_get("/stats", stats)
     return app
 
 

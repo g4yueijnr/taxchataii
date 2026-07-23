@@ -197,3 +197,87 @@ def test_sim_reconcile_replaces_on_price_change():
     assert om.orders_for("T")["yes"].order_id == oid1   # unchanged -> kept
     asyncio.run(om.reconcile("T", [DesiredOrder("yes", 43, 5)]))
     assert om.orders_for("T")["yes"].order_id != oid1   # repriced -> replaced
+
+
+# --------------------------------------------------------------- settlement
+
+def test_settlement_tracker_decided():
+    from mm.settlement import SettlementTracker
+    tr = SettlementTracker(close_ts=1000.0)
+    # 59 of 60 samples locked in well above strike: outcome ~certain.
+    tr.samples = {i: 0.102 for i in range(59)}
+    assert tr.prob_up(0.1, 0.102, 1e-4) > 0.999
+    # All samples in and below strike: fully decided down.
+    tr.samples = {i: 0.099 for i in range(60)}
+    assert tr.prob_up(0.1, 0.102, 1e-4) == 0.0
+
+
+def test_sniper_takes_cheap_certainty():
+    from mm.settlement import Sniper
+    cfg = Config()
+    sn = Sniper(cfg)
+    now = time.time()
+    mkt = MarketInfo("T", 0.1, now + 30, now - 870)
+    sn.tracker(mkt).samples = {i: 0.102 for i in range(30)}
+    spot = make_spot(price=0.102)
+    book = Book("T")
+    book.apply_snapshot({"yes": [[5, 20]], "no": [[8, 50]]})   # ask 92c
+    take = sn.evaluate(mkt, book, spot, strike_is_proxy=False, now=now)
+    assert take is not None and take.side == "yes"
+    assert take.limit_price == 92 and take.size == cfg.sniper_size
+    # Same side never taken twice.
+    assert sn.evaluate(mkt, book, spot, strike_is_proxy=False, now=now) is None
+
+
+def test_sniper_refuses_proxy_strike_and_fair_price():
+    from mm.settlement import Sniper
+    cfg = Config()
+    sn = Sniper(cfg)
+    now = time.time()
+    mkt = MarketInfo("T", 0.1, now + 30, now - 870)
+    sn.tracker(mkt).samples = {i: 0.102 for i in range(30)}
+    spot = make_spot(price=0.102)
+    book = Book("T")
+    book.apply_snapshot({"yes": [[5, 20]], "no": [[8, 50]]})
+    assert sn.evaluate(mkt, book, spot, strike_is_proxy=True, now=now) is None
+    # Fully-priced book (ask 99c): no EV left, no take.
+    book2 = Book("T")
+    book2.apply_snapshot({"yes": [[5, 20]], "no": [[1, 50]]})
+    sn2 = Sniper(cfg)
+    sn2.tracker(mkt).samples = {i: 0.102 for i in range(30)}
+    assert sn2.evaluate(mkt, book2, spot, strike_is_proxy=False, now=now) is None
+
+
+# ------------------------------------------------------------------ journal
+
+def test_journal_roundtrip(tmp_path):
+    from mm.journal import Journal
+    j = Journal(str(tmp_path))
+    fid = j.record_fill("DOGE", "T", "yes", "buy", 5, 42, 5, 2.0, False, 50.0)
+    j.set_markout(fid, 1.5)
+    stats = j.coin_stats()
+    assert stats["DOGE"]["fills"] == 1
+    assert stats["DOGE"]["contracts"] == 5
+    assert stats["DOGE"]["avg_markout_cents"] == 1.5
+    j.close()
+
+
+# ------------------------------------------------------------ per-coin risk
+
+def test_coin_bench_sticks_for_day():
+    from mm.risk import RiskManager
+    cfg = Config()
+    rm = RiskManager(cfg, PositionBook())
+    assert rm.coin_allowed("DOGE", 0.0)
+    assert not rm.coin_allowed("DOGE", -cfg.coin_daily_loss_limit_dollars * 100)
+    assert not rm.coin_allowed("DOGE", 0.0)   # benched even after recovery
+    assert rm.coin_allowed("BNB", 0.0)        # others unaffected
+    assert rm.benched_coins == ["DOGE"]
+
+
+def test_position_tracks_per_market_net():
+    pb = PositionBook()
+    pb.on_fill("T", "yes", "buy", 5, 40, 60, fee=2.0)
+    pb.on_fill("T", "no", "buy", 5, 42, 58, fee=2.0)
+    p = pb.pos("T")
+    assert p.realized == 10.0 and p.fees == 4.0

@@ -13,15 +13,18 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import logging
+import signal
 import time
 from dataclasses import dataclass, field
 
 from .config import CoinConfig, Config, load_config
 from .execution import OrderManager, PositionBook
 from .health import start_http
+from .journal import MARKOUT_HORIZON_S, Journal
 from .kalshi_rest import KalshiRest
 from .kalshi_ws import KalshiWs
 from .risk import RiskManager
+from .settlement import Sniper
 from .sim import SimOrderManager
 from .spot import SpotFeeds
 from .strategy import MarketInfo, QuoteEngine
@@ -50,6 +53,7 @@ class ActiveMarket:
     last_reason: str = "new"
     last_eval: float = 0.0
     dirty: bool = True
+    sniped: bool = False   # holding a settlement snipe to expiry
 
 
 class Bot:
@@ -68,8 +72,68 @@ class Bot:
             self.om: OrderManager = SimOrderManager(cfg, self.positions)
         else:
             self.om = OrderManager(self.rest, cfg, self.positions)
+        self.om.on_booked = self._on_booked
+        self.sniper = Sniper(cfg)
+        self.journal = Journal(cfg.data_dir)
         self.active: dict[str, ActiveMarket] = {}       # ticker -> state
         self._settling: dict[str, CoinConfig] = {}      # closed, awaiting result
+        self._ticker_coin: dict[str, str] = {}          # ticker -> coin symbol
+        self._pending_markouts: list[tuple[int, str, float, float, int]] = []
+        self._coin_day_base: dict[str, float] = {}      # coin -> net at day start
+        self._coin_day: dt.date = dt.date.today()
+
+    # ----------------------------------------------------------- coin P&L
+
+    def coin_net_cents(self, coin: str) -> float:
+        """Net realized P&L (cents, after fees) for a coin's markets."""
+        return sum(p.realized - p.fees for t, p in self.positions.positions.items()
+                   if self._ticker_coin.get(t) == coin)
+
+    def coin_day_net_cents(self, coin: str) -> float:
+        today = dt.date.today()
+        if today != self._coin_day:
+            self._coin_day = today
+            self._coin_day_base = {c.symbol: self.coin_net_cents(c.symbol)
+                                   for c in self.cfg.coins}
+        return self.coin_net_cents(coin) - self._coin_day_base.get(coin, 0.0)
+
+    # ----------------------------------------------------------- journaling
+
+    def _on_booked(self, ticker: str, side: str, action: str, count: int,
+                   price: int, yes_equiv_qty: int, fee: float,
+                   is_taker: bool, reason: str) -> None:
+        coin = self._ticker_coin.get(ticker, "?")
+        st = self.active.get(ticker)
+        fair = st.last_fair if st and st.last_fair > 0 else None
+        try:
+            fill_id = self.journal.record_fill(
+                coin, ticker, side, action, count, price, yes_equiv_qty,
+                fee, is_taker, fair, reason)
+        except Exception:
+            log.exception("journal write failed")
+            return
+        if fair is not None:
+            sign = 1 if yes_equiv_qty > 0 else -1
+            self._pending_markouts.append(
+                (fill_id, ticker, time.time(), fair, sign))
+
+    async def markout_loop(self) -> None:
+        while True:
+            await asyncio.sleep(5.0)
+            now = time.time()
+            keep = []
+            for fill_id, ticker, ts, fair_at, sign in self._pending_markouts:
+                if now - ts < MARKOUT_HORIZON_S:
+                    keep.append((fill_id, ticker, ts, fair_at, sign))
+                    continue
+                st = self.active.get(ticker)
+                if st and st.last_fair > 0:
+                    try:
+                        self.journal.set_markout(
+                            fill_id, sign * (st.last_fair - fair_at))
+                    except Exception:
+                        log.exception("markout write failed")
+            self._pending_markouts = keep
 
     # ------------------------------------------------------------ callbacks
 
@@ -132,6 +196,7 @@ class Bot:
                         info.strike = spot.price
                         st.strike_is_proxy = True
                 self.active[ticker] = st
+                self._ticker_coin[ticker] = coin.symbol
                 log.info("tracking %s strike=%s%s close=%s", ticker, info.strike,
                          " (spot proxy)" if st.strike_is_proxy else "",
                          m.get("close_time"))
@@ -144,6 +209,7 @@ class Bot:
             if self.positions.pos(ticker).net != 0:
                 self._settling[ticker] = st.coin
         await self.ws.set_markets(set(self.active))
+        self.sniper.prune(set(self.active))
         await self._resolve_settlements()
 
         if not self.cfg.dry_run and self.rest.can_trade:
@@ -205,22 +271,58 @@ class Bot:
             st.last_eval = now
             book = self.ws.book(ticker)
             p = self.positions.pos(ticker)
-            decision = self.engine.compute(
-                st.info, book, spot, p.net,
-                p.avg_entry if p.net != 0 else None, now)
-            st.last_fair = decision.fair
-            st.last_fv_vol = decision.fv_vol
-            st.last_reason = decision.reason if ok else f"risk:{reason}"
+            coin_ok = self.risk.coin_allowed(
+                st.coin.symbol, self.coin_day_net_cents(st.coin.symbol))
 
-            for c in decision.crosses:
-                if isinstance(self.om, SimOrderManager):
-                    await self.om.cross(ticker, c, book)
-                else:
-                    await self.om.cross(ticker, c)
-            if decision.desired and ok:
-                await self.om.reconcile(ticker, decision.desired)
+            if st.sniped and p.net != 0:
+                # Snipes are held to settlement — keep fair fresh for the
+                # dashboard/markouts but don't let the MM flatten them.
+                st.last_reason = "sniped"
+                self._update_fair(st, spot, now)
             else:
-                await self.om.cancel_all(ticker)
+                decision = self.engine.compute(
+                    st.info, book, spot, p.net,
+                    p.avg_entry if p.net != 0 else None, now)
+                st.last_fair = decision.fair
+                st.last_fv_vol = decision.fv_vol
+                if not ok:
+                    st.last_reason = f"risk:{reason}"
+                elif not coin_ok:
+                    st.last_reason = "coin_benched"
+                else:
+                    st.last_reason = decision.reason
+
+                for c in decision.crosses:
+                    if isinstance(self.om, SimOrderManager):
+                        await self.om.cross(ticker, c, book)
+                    else:
+                        await self.om.cross(ticker, c)
+                if decision.desired and ok and coin_ok:
+                    await self.om.reconcile(ticker, decision.desired)
+                else:
+                    await self.om.cancel_all(ticker)
+
+            # Settlement sniper: flat markets only, near the close.
+            if (ok and coin_ok and not st.sniped and p.net == 0
+                    and st.info.seconds_to_close(now) <= self.cfg.sniper_window_s):
+                take = self.sniper.evaluate(st.info, book, spot,
+                                            st.strike_is_proxy, now)
+                if take:
+                    st.sniped = True
+                    st.last_reason = "sniping"
+                    log.info("SNIPE %s buy %s %d@%dc (%s)", ticker, take.side,
+                             take.size, take.limit_price, take.reason)
+                    if isinstance(self.om, SimOrderManager):
+                        await self.om.cross(ticker, take, book)
+                    else:
+                        await self.om.cross(ticker, take)
+
+    def _update_fair(self, st: ActiveMarket, spot, now: float) -> None:
+        from .model import fair_value_cents
+        if spot.price > 0 and st.info.strike > 0:
+            st.last_fair = fair_value_cents(
+                spot.price, st.info.strike, spot.vol.sigma_per_sec,
+                st.info.seconds_to_close(now))
 
     # ------------------------------------------------------------ lifecycle
 
@@ -231,17 +333,34 @@ class Bot:
             raise SystemExit(
                 "DRY_RUN=false but KALSHI_API_KEY_ID / KALSHI_PRIVATE_KEY missing")
         await self.rest.start()
+        if not self.cfg.dry_run:
+            await self._boot_sweep()
         http = await start_http(self, self.cfg.port)
+
+        stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            try:
+                loop.add_signal_handler(sig, stop.set)
+            except NotImplementedError:
+                pass
         tasks = [
             asyncio.create_task(self.spots.run_forever(), name="spot"),
             asyncio.create_task(self.ws.run_forever(), name="kalshi-ws"),
             asyncio.create_task(self.discovery_loop(), name="discovery"),
             asyncio.create_task(self.eval_loop(), name="eval"),
+            asyncio.create_task(self.markout_loop(), name="markout"),
         ]
+        stopper = asyncio.create_task(stop.wait(), name="stop")
         try:
-            await asyncio.gather(*tasks)
+            done, _ = await asyncio.wait([*tasks, stopper],
+                                         return_when=asyncio.FIRST_COMPLETED)
+            for t in done:
+                if t is not stopper and t.exception():
+                    raise t.exception()
+            log.info("shutdown signal received")
         finally:
-            for t in tasks:
+            for t in [*tasks, stopper]:
                 t.cancel()
             if not self.cfg.dry_run:
                 try:
@@ -250,6 +369,24 @@ class Bot:
                     log.exception("final cancel_all failed")
             await http.cleanup()
             await self.rest.close()
+            self.journal.close()
+
+    async def _boot_sweep(self) -> None:
+        """Cancel stray resting orders left by a previous run/crash."""
+        try:
+            orders = await self.rest.get_resting_orders()
+        except Exception as e:
+            log.warning("boot sweep failed to list orders: %s", e)
+            return
+        for o in orders:
+            oid = o.get("order_id") or o.get("id")
+            if oid:
+                try:
+                    await self.rest.cancel_order(oid)
+                    log.info("boot sweep: cancelled stray order %s (%s)",
+                             oid, o.get("ticker"))
+                except Exception as e:
+                    log.warning("boot sweep cancel failed %s: %s", oid, e)
 
 
 def main() -> None:

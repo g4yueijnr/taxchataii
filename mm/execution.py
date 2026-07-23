@@ -28,6 +28,8 @@ class Position:
     ticker: str
     net: int = 0                # + long YES, - short YES (long NO)
     avg_entry: float = 0.0      # yes-equivalent cents basis of open position
+    realized: float = 0.0       # realized P&L (cents, pre-fee) on this market
+    fees: float = 0.0           # fees paid on this market
 
 
 @dataclass
@@ -52,6 +54,7 @@ class PositionBook:
         else:
             qty, px = -count, float(100 - no_price)
         self.fees_cents += fee
+        p.fees += fee
         self.fills += 1
 
         if p.net == 0 or (p.net > 0) == (qty > 0):
@@ -63,6 +66,7 @@ class PositionBook:
         closed = min(abs(qty), abs(p.net))
         pnl_per = (px - p.avg_entry) if p.net > 0 else (p.avg_entry - px)
         self.realized_cents += pnl_per * closed
+        p.realized += pnl_per * closed
         p.net += qty
         if p.net == 0:
             p.avg_entry = 0.0
@@ -77,6 +81,7 @@ class PositionBook:
         settle_px = 100.0 if result == "yes" else 0.0
         pnl_per = (settle_px - p.avg_entry) if p.net > 0 else (p.avg_entry - settle_px)
         self.realized_cents += pnl_per * abs(p.net)
+        p.realized += pnl_per * abs(p.net)
         log.info("settled %s result=%s residual=%+d pnl=%.0fc",
                  ticker, result, p.net, pnl_per * abs(p.net))
         p.net = 0
@@ -114,6 +119,9 @@ class OrderManager:
         self.cfg = cfg
         self.positions = book
         self.live: dict[str, dict[str, LiveOrder]] = {}   # ticker -> side -> order
+        # Set by Bot: called after every booked fill for journaling.
+        # (ticker, side, action, count, price, yes_equiv_qty, fee, is_taker, reason)
+        self.on_booked = None
 
     def orders_for(self, ticker: str) -> dict[str, LiveOrder]:
         return self.live.setdefault(ticker, {})
@@ -123,10 +131,14 @@ class OrderManager:
         want = {d.side: d for d in desired}
 
         # Cancels first: stale quotes are the adverse-selection surface.
+        # Aged orders get replaced too, so the dead-man TTL never expires
+        # a quote we still want.
+        now = time.time()
         for side in list(current):
             have = current[side]
             d = want.get(side)
-            if d is None or d.price != have.price or d.size > have.size:
+            if (d is None or d.price != have.price or d.size > have.size
+                    or now - have.placed_at > self.cfg.order_refresh_s):
                 await self._cancel(ticker, side)
 
         for side, d in want.items():
@@ -154,7 +166,9 @@ class OrderManager:
 
     async def _place(self, ticker: str, side: str, price: int, size: int) -> None:
         try:
-            resp = await self.rest.create_order(ticker, "buy", side, size, price)
+            resp = await self.rest.create_order(
+                ticker, "buy", side, size, price,
+                expiration_ts=int(time.time()) + self.cfg.order_ttl_s)
             oid = resp.get("order_id") or resp.get("id", "")
             self.orders_for(ticker)[side] = LiveOrder(oid, side, price, size)
         except KalshiApiError as e:
@@ -181,6 +195,10 @@ class OrderManager:
         price = yes_price if side == "yes" else no_price
         fee = float(fee_cents(price, count, mult))
         self.positions.on_fill(ticker, side, action, count, yes_price, no_price, fee)
+        if self.on_booked:
+            qty = count if (side == "yes") == (action == "buy") else -count
+            self.on_booked(ticker, side, action, count, price, qty, fee,
+                           is_taker, "live")
 
         current = self.orders_for(ticker).get(side)
         if current and msg.get("order_id") == current.order_id:

@@ -48,6 +48,41 @@ or vanish. On top of that:
 - **Kill switch** — daily loss limit, gross exposure cap, balance floor;
   trips cancel-all and stays down until restart.
 
+## Settlement sniper (second edge, on by default)
+
+Settlement is the average of ~60 once-per-second index prints over the
+final minute — which means the outcome becomes progressively *observable*
+while quotes are still moving. The sniper tracks those samples live off
+the spot feed, and when one side is ≥98.5% decided but still offered with
+≥1.5¢ of EV after taker fees, it takes it and holds to settlement. This is
+the documented shape of the consistently profitable bots in these markets.
+Guards: never fires off an approximated strike, only on flat markets, one
+shot per side per window, sized by `MM_SNIPER_SIZE` (default 10), respects
+all global risk limits. Disable with `MM_SNIPER_ENABLED=false`.
+
+## Trade journal & markouts
+
+Every fill (paper or live) lands in SQLite (`data/mm.sqlite3`, override
+with `MM_DATA_DIR` — mount a Railway volume there to persist). Each fill
+records fair value at fill time; 30s later the **markout** is written:
+how far fair moved for/against you after the fill. `GET /stats` shows
+per-coin fills, contracts, fees, and average markout. **A persistently
+negative markout is the signature of adverse selection** — widen
+`MM_BASE_EDGE_CENTS` or `as_vol_mult` for that coin if you see it.
+
+## Per-coin circuit breaker
+
+A coin whose net realized P&L (after fees) drops past
+`MM_COIN_DAILY_LOSS_LIMIT` (default $15) is benched for the rest of the
+day — quotes pulled, exits still managed, other coins unaffected.
+
+## Fail-safes
+
+- Every resting order carries a ~2-minute exchange-side expiration
+  (dead-man switch): if the bot dies, its quotes die with it.
+- On boot the bot cancels any stray resting orders from a previous run.
+- SIGTERM (Railway redeploys) triggers cancel-all before exit.
+
 ## Run it
 
 ```bash
