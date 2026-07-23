@@ -71,22 +71,36 @@ class SpotFeeds:
                 await ws.send(json.dumps({
                     "type": "subscribe",
                     "product_ids": list(products),
-                    "channels": ["matches", "heartbeat"],
+                    "channels": ["ticker", "heartbeat"],
                 }))
                 log.info("coinbase feed up: %s", list(products))
                 async for raw in ws:
                     msg = json.loads(raw)
-                    if msg.get("type") in ("match", "last_match"):
-                        sym = products.get(msg.get("product_id", ""))
-                        if sym:
-                            self.states[sym].on_tick(float(msg["price"]))
+                    mtype = msg.get("type")
+                    sym = products.get(msg.get("product_id", ""))
+                    if not sym:
+                        continue
+                    if mtype == "ticker":
+                        # Prefer BBO mid (moves without trades); fall back
+                        # to last trade price.
+                        bid = float(msg.get("best_bid") or 0)
+                        ask = float(msg.get("best_ask") or 0)
+                        px = (bid + ask) / 2 if bid > 0 and ask > 0 else \
+                            float(msg.get("price") or 0)
+                        if px > 0:
+                            self.states[sym].on_tick(px)
+                    elif mtype == "heartbeat":
+                        self.states[sym].touch()
 
         await self._loop("coinbase", connect)
 
     # ------------------------------------------------------------ binance
 
     async def _run_binance(self, coins: list[CoinConfig]) -> None:
-        streams = {f"{c.spot_symbol}@trade": c.symbol for c in coins}
+        streams: dict[str, str] = {}
+        for c in coins:
+            streams[f"{c.spot_symbol}@trade"] = c.symbol
+            streams[f"{c.spot_symbol}@bookTicker"] = c.symbol
         url = f"{BINANCE_WS}/stream?streams={'/'.join(streams)}"
 
         async def connect():
@@ -94,9 +108,16 @@ class SpotFeeds:
                 log.info("binance feed up: %s", list(streams))
                 async for raw in ws:
                     msg = json.loads(raw)
-                    sym = streams.get(msg.get("stream", ""))
+                    stream = msg.get("stream", "")
+                    sym = streams.get(stream)
                     data = msg.get("data") or {}
-                    if sym and "p" in data:
+                    if not sym:
+                        continue
+                    if stream.endswith("@bookTicker"):
+                        bid, ask = float(data.get("b") or 0), float(data.get("a") or 0)
+                        if bid > 0 and ask > 0:
+                            self.states[sym].on_tick((bid + ask) / 2)
+                    elif "p" in data:
                         self.states[sym].on_tick(float(data["p"]))
 
         await self._loop("binance", connect)
@@ -108,17 +129,31 @@ class SpotFeeds:
 
         async def connect():
             async with websockets.connect(KRAKEN_WS, ping_interval=15) as ws:
+                # BBO-triggered ticker: updates whenever the top of book
+                # moves, which is what keeps thin coins (ZEC, NEAR) fresh.
                 await ws.send(json.dumps({
                     "method": "subscribe",
-                    "params": {"channel": "trade", "symbol": list(pairs)},
+                    "params": {"channel": "ticker", "symbol": list(pairs),
+                               "event_trigger": "bbo"},
                 }))
                 log.info("kraken feed up: %s", list(pairs))
                 async for raw in ws:
                     msg = json.loads(raw)
-                    if msg.get("channel") == "trade":
+                    channel = msg.get("channel")
+                    if channel == "ticker":
                         for t in msg.get("data") or []:
                             sym = pairs.get(t.get("symbol", ""))
-                            if sym and "price" in t:
-                                self.states[sym].on_tick(float(t["price"]))
+                            if not sym:
+                                continue
+                            bid = float(t.get("bid") or 0)
+                            ask = float(t.get("ask") or 0)
+                            px = (bid + ask) / 2 if bid > 0 and ask > 0 else \
+                                float(t.get("last") or 0)
+                            if px > 0:
+                                self.states[sym].on_tick(px)
+                    elif channel == "heartbeat":
+                        # Kraken heartbeats ~1/s while the connection lives.
+                        for sym in pairs.values():
+                            self.states[sym].touch()
 
         await self._loop("kraken", connect)

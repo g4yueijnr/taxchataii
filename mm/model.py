@@ -24,9 +24,12 @@ class EwmaVol:
     Also keeps a short 30s window to detect vol spikes vs baseline.
     """
 
+    WARMUP_SAMPLES = 30
+
     def __init__(self, halflife_s: float = 300.0):
         self.halflife_s = halflife_s
         self.var_per_sec: float = 0.0   # EWMA variance of 1s log returns
+        self.n_samples: int = 0
         self._last_price: float | None = None
         self._last_ts: float = 0.0
         self._recent: list[tuple[float, float]] = []  # (ts, logret^2/dt)
@@ -42,6 +45,7 @@ class EwmaVol:
             else:
                 alpha = 1.0 - 0.5 ** (dt / self.halflife_s)
                 self.var_per_sec += alpha * (inst_var - self.var_per_sec)
+            self.n_samples += 1
             self._recent.append((ts, inst_var))
             cutoff = ts - 30.0
             while self._recent and self._recent[0][0] < cutoff:
@@ -54,8 +58,13 @@ class EwmaVol:
         return math.sqrt(self.var_per_sec) if self.var_per_sec > 0 else 0.0
 
     def spike_ratio(self) -> float:
-        """30s realized variance / EWMA baseline. >1 means hotter than usual."""
-        if not self._recent or self.var_per_sec <= 0:
+        """30s realized variance / EWMA baseline. >1 means hotter than usual.
+
+        Disarmed during warmup: with only a handful of ticks the baseline is
+        noise and the breaker would trip on startup.
+        """
+        if (self.n_samples < self.WARMUP_SAMPLES or not self._recent
+                or self.var_per_sec <= 0):
             return 1.0
         recent = sum(v for _, v in self._recent) / len(self._recent)
         return recent / self.var_per_sec
@@ -74,6 +83,12 @@ class SpotState:
         self.vol.update(price, ts)
         self.price = price
         self.last_update = ts
+
+    def touch(self, ts: float | None = None) -> None:
+        """Exchange heartbeat: feed is alive and the price simply hasn't
+        moved. Refreshes staleness without polluting the vol estimate."""
+        if self.price > 0:
+            self.last_update = ts if ts is not None else time.time()
 
     def is_stale(self, max_age_s: float) -> bool:
         return self.price <= 0 or (time.time() - self.last_update) > max_age_s

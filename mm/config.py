@@ -48,7 +48,9 @@ DEFAULT_COINS: dict[str, CoinConfig] = {
     "BTC": CoinConfig("BTC", "KXBTC15M", "coinbase", "BTC-USD"),
     "ETH": CoinConfig("ETH", "KXETH15M", "coinbase", "ETH-USD"),
     "ZEC": CoinConfig("ZEC", "KXZEC15M", "kraken", "ZEC/USD"),
-    "NEAR": CoinConfig("NEAR", "KXNEAR15M", "coinbase", "NEAR-USD"),
+    # Kraken over Coinbase for NEAR: its BBO-triggered ticker keeps thin
+    # coins fresh between trades.
+    "NEAR": CoinConfig("NEAR", "KXNEAR15M", "kraken", "NEAR/USD"),
 }
 
 
