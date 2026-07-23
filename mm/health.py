@@ -47,6 +47,7 @@ def _status_body(bot) -> dict:
         "status": "halted" if bot.risk.halted else "ok",
         "version": __version__,
         "data_mode": bot.data_mode,
+        "last_data_error": bot.last_data_error,
         "halt_reason": bot.risk.halt_reason,
         "dry_run": bot.cfg.dry_run,
         "uptime_s": round(now - bot.started_at, 1),
@@ -111,6 +112,8 @@ def _dashboard_html(bot) -> str:
         f"{pnl['fills']} fills · fees {pnl['fees_cents']:.1f}c · "
         f"kalshi data <b class={'g' if s['data_mode'] == 'websocket' else 'y'}>"
         f"{s['data_mode']}</b> · "
+        + (f"<b class=r>DATA ERROR: {html.escape(s['last_data_error'][:160])}"
+           f"</b> · " if s["last_data_error"] else "")
         f"status <b class={'r' if s['status'] != 'ok' else 'g'}>{s['status']}"
         f"</b> {html.escape(s['halt_reason'])}</p>")
 

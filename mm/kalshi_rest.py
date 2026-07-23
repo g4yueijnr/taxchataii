@@ -87,7 +87,10 @@ class KalshiRest:
                        params: dict | None = None, json_body: dict | None = None) -> dict:
         assert self._session is not None, "call start() first"
         full = API_PREFIX + path
-        headers = self.auth_headers(method, full) if auth else {}
+        # Sign every request when keys exist — some nominally-public market
+        # data endpoints (orderbook) reject unauthenticated calls, and
+        # signing public ones costs nothing.
+        headers = self.auth_headers(method, full) if (auth or self.can_trade) else {}
         async with self._session.request(
                 method, self.base_url + full, params=params,
                 json=json_body, headers=headers) as resp:

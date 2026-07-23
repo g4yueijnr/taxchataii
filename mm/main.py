@@ -83,6 +83,7 @@ class Bot:
         self._coin_day: dt.date = dt.date.today()
         self._last_report = time.time()
         self._last_trade_ts: dict[str, float] = {}      # REST tape cursor
+        self.last_data_error: str = ""                  # surfaced on dashboard
 
     @property
     def ws_healthy(self) -> bool:
@@ -301,7 +302,14 @@ class Bot:
                         fallback_logged = True
                 need.sort(key=lambda t: self.active[t].info.close_ts)
                 for t in need[:6]:
-                    await self._sync_market_rest(t)
+                    # Per-market isolation: one failing endpoint must not
+                    # starve the other markets of data.
+                    try:
+                        await self._sync_market_rest(t)
+                        self.last_data_error = ""
+                    except Exception as e:
+                        self.last_data_error = f"{t}: {e}"
+                        log.warning("book sync %s failed: %s", t, e)
             except asyncio.CancelledError:
                 raise
             except Exception:
