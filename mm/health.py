@@ -114,8 +114,8 @@ def _dashboard_html(bot) -> str:
         f"{s['data_mode']}</b> · "
         + (f"<b class=r>DATA ERROR: {html.escape(s['last_data_error'][:160])}"
            f"</b> · " if s["last_data_error"] else "")
-        f"status <b class={'r' if s['status'] != 'ok' else 'g'}>{s['status']}"
-        f"</b> {html.escape(s['halt_reason'])}</p>")
+        + f"status <b class={'r' if s['status'] != 'ok' else 'g'}>{s['status']}"
+          f"</b> {html.escape(s['halt_reason'])}</p>")
 
     spot_rows = "".join(
         f"<tr><td>{sym}</td><td>{v['price']:.6g}</td>"
