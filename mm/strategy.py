@@ -166,14 +166,30 @@ class QuoteEngine:
         if pick:
             d.crosses.append(pick)
 
-        # ---------------- two-sided quotes around fair -------------------
+        # ---------------- two-sided quotes around the MARKET -------------
+        # Center on the book mid (where the market actually is), tilted a
+        # bounded amount toward our fair. Quoting around a fair that
+        # disagrees with the book by 20c+ (common near the money, where our
+        # spot source differs from Kalshi's settlement index) just parks us
+        # off-market with zero fills. As a maker we earn the spread; we
+        # don't need to be right about direction, only to stay near the
+        # market and manage inventory.
+        if book.yes and book.no and not book.crossed:
+            mid = book.mid
+            lean = fair - mid
+            lean = max(-cfg.max_fair_lean_cents,
+                       min(cfg.max_fair_lean_cents, lean)) * cfg.fair_lean_frac
+            center = mid + lean
+        else:
+            center = fair
+
         half = (cfg.base_edge_cents
-                + maker_fee_per_contract(int(round(fair)) or 1, cfg.maker_fee_mult)
+                + maker_fee_per_contract(int(round(center)) or 1, cfg.maker_fee_mult)
                 + cfg.as_vol_mult * fv_vol)
         skew = cfg.inventory_skew_cents * (position / max(cfg.max_position, 1))
 
-        bid_target = fair - half - skew          # our YES buy
-        ask_target = fair + half - skew          # our YES sell == NO buy at 100-ask
+        bid_target = center - half - skew        # our YES buy
+        ask_target = center + half - skew        # our YES sell == NO buy at 100-ask
 
         bid = int(math.floor(bid_target))
         ask = int(math.ceil(ask_target))

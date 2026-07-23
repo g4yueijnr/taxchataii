@@ -577,3 +577,45 @@ def test_reason_stats_groups_by_strategy(tmp_path):
     assert stats["maker"]["fills"] == 1
     assert stats["maker"]["avg_markout_cents"] == 2.0
     j.close()
+
+
+# ------------------------------------------------ book-anchored quoting
+
+def test_maker_anchors_to_book_not_disagreeing_fair():
+    """The zero-fills bug: market at 60/75 but our fair says 46. Old code
+    quoted ~42 bid (off-market, never fills). Book-anchored maker must
+    quote INSIDE the book, near the market, so it can actually fill."""
+    cfg = Config()
+    eng = QuoteEngine(cfg)
+    mkt, now = make_mkt()
+    spot = make_spot(price=0.09965)    # fair well below 50
+    book = Book(mkt.ticker)
+    book.apply_snapshot({"yes": [[60, 20]], "no": [[25, 20]]})  # 60 bid / 75 ask
+    d = eng.compute(mkt, book, spot, 0, None, now)
+    assert d.reason == "quoting"
+    sides = {o.side: o for o in d.desired}
+    bid = sides["yes"].price
+    ask = 100 - sides["no"].price
+    # Quotes sit INSIDE the book (competitive), not 15c below it.
+    assert book.best_yes_bid <= bid < ask <= book.best_yes_ask
+    assert bid >= book.best_yes_bid           # at or improving the best bid
+    # And leaning slightly low because our fair is below the market.
+    assert (bid + ask) / 2 < book.mid + 1
+
+
+def test_maker_not_competitive_on_tight_book_against_fair():
+    """1c market (71/72) but our fair says it's worth ~69: we must NOT
+    improve the book (that would mean buying at 72, above our own value).
+    Uncompetitive resting quotes are correct — no overpaying to fill."""
+    cfg = Config()
+    eng = QuoteEngine(cfg)
+    mkt, now = make_mkt()
+    spot = make_spot(price=0.10015)     # fair a bit above 50, below market 71
+    book = Book(mkt.ticker)
+    book.apply_snapshot({"yes": [[71, 20]], "no": [[28, 20]]})  # 71 / 72
+    d = eng.compute(mkt, book, spot, 0, None, now)
+    sides = {o.side: o for o in d.desired}
+    if "yes" in sides:
+        assert sides["yes"].price <= book.best_yes_bid   # not improving the bid
+    if "no" in sides:
+        assert 100 - sides["no"].price >= book.best_yes_ask  # not improving ask

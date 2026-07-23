@@ -77,6 +77,12 @@ class Config:
                                   #  for fills; 2.0 quoted so wide it never did)
     inventory_skew_cents: float = 2.0   # extra skew at full inventory
     improve_tick: bool = True     # step 1c inside the current best when profitable
+    # Anchor quotes to the MARKET (book mid), not our independent fair —
+    # quoting around our own opinion when it disagrees with the book leaves
+    # us off-market and never filling. Fair still nudges the center (bounded)
+    # and drives inventory skew.
+    fair_lean_frac: float = 0.4        # fraction of the fair-vs-mid gap to lean
+    max_fair_lean_cents: float = 6.0   # hard cap on that lean
 
     # --- stale-quote picker (mid-window latency taker) --------------------
     # OFF by default: measured -2.36c avg markout over many fills — it bets
@@ -98,8 +104,8 @@ class Config:
 
     # --- adverse-selection circuit breakers ------------------------------
     spot_stale_seconds: float = 3.0    # pull quotes if the spot feed goes quiet
-    vol_spike_mult: float = 3.5        # pull quotes when 30s vol > mult * baseline
-    vol_spike_cooldown: float = 20.0   # seconds to stay out after a spike
+    vol_spike_mult: float = 6.0        # pull quotes when 30s vol > mult * baseline
+    vol_spike_cooldown: float = 10.0   # seconds to stay out after a spike
     scratch_cents: int = 6             # cross out if fair moves this far against inventory
                                        # (raised: +18c scratch markouts showed we
                                        #  were realizing losses that then reverted)
