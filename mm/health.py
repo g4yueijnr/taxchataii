@@ -161,6 +161,18 @@ def _dashboard_html(bot) -> str:
         f"<td>{'BENCHED' if v['benched'] else 'active'}</td></tr>"
         for c, v in s["coins"].items())
 
+    def _strat_row(name, v):
+        mo = v["avg_markout_cents"]
+        mo_txt = "—" if mo is None else f"{mo:+.2f}c"
+        return (f"<tr><td>{name}</td><td>{v['fills']}</td>"
+                f"<td>{v['contracts']}</td><td>{v['fees_cents']:.0f}c</td>"
+                f"<td class={_pnl_cls(mo)}>{mo_txt}</td></tr>")
+
+    rstats = bot.journal.reason_stats()
+    strat_rows = "".join(
+        _strat_row(name, v)
+        for name, v in sorted(rstats.items(), key=lambda kv: -kv[1]["fills"]))
+
     return f"""<!doctype html><html><head><meta charset=utf-8>
 <meta http-equiv=refresh content=5><title>kalshi mm</title>
 <style>{_CSS}</style></head><body>
@@ -172,6 +184,11 @@ def _dashboard_html(bot) -> str:
 <th>state</th><th>book bid/ask</th><th>OUR bid/ask</th><th>pos</th></tr>{mkt_rows}</table>
 <h2>PER-COIN P&amp;L (after fees)</h2>
 <table><tr><th>coin</th><th>net</th><th>status</th></tr>{coin_rows}</table>
+<h2>BY STRATEGY <span class=m>(which sub-strategy actually earns — avg
+markout is the edge signal, + is good)</span></h2>
+<table><tr><th>strategy</th><th>fills</th><th>contracts</th><th>fees</th>
+<th>avg markout</th></tr>
+{strat_rows or '<tr><td colspan=5 class=m>no fills yet</td></tr>'}</table>
 <h2>TRADES <span class=m>(newest first; markout = fair move 30s after fill,
 + is good)</span></h2>
 <table><tr><th>time UTC</th><th>coin</th><th>trade</th><th>price</th>
@@ -228,6 +245,7 @@ def make_app(bot) -> web.Application:
         return web.json_response({
             "all_time": bot.journal.coin_stats(),
             "today": bot.journal.coin_stats(since_ts=day_start),
+            "by_strategy": bot.journal.reason_stats(),
         })
 
     app = web.Application()

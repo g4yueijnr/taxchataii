@@ -75,6 +75,33 @@ class Journal:
             (limit,)).fetchall()
         return [dict(zip(cols, r)) for r in rows]
 
+    def reason_stats(self, since_ts: float = 0.0) -> dict[str, dict]:
+        """Per-strategy scoreboard. reason is the fill's origin tag
+        (maker / pick / snipe / scratch / flatten...), collapsed to its
+        first word. avg_markout is the honest per-strategy edge signal."""
+        rows = self.db.execute(
+            "SELECT reason, COUNT(*), SUM(count), SUM(fee_cents), "
+            "AVG(markout_cents) FROM fills WHERE ts >= ? GROUP BY reason",
+            (since_ts,)).fetchall()
+        agg: dict[str, dict] = {}
+        for reason, fills, contracts, fees, mo in rows:
+            key = (reason or "?").split()[0].split("_")[0]
+            a = agg.setdefault(key, {"fills": 0, "contracts": 0,
+                                     "fees_cents": 0.0, "_mo_sum": 0.0,
+                                     "_mo_n": 0})
+            a["fills"] += fills
+            a["contracts"] += contracts or 0
+            a["fees_cents"] += fees or 0.0
+            if mo is not None:
+                a["_mo_sum"] += mo * fills
+                a["_mo_n"] += fills
+        for a in agg.values():
+            a["avg_markout_cents"] = (round(a["_mo_sum"] / a["_mo_n"], 2)
+                                      if a["_mo_n"] else None)
+            a["fees_cents"] = round(a["fees_cents"], 1)
+            del a["_mo_sum"], a["_mo_n"]
+        return agg
+
     def coin_stats(self, since_ts: float = 0.0) -> dict[str, dict]:
         rows = self.db.execute(
             "SELECT coin, COUNT(*), SUM(count), SUM(fee_cents), "

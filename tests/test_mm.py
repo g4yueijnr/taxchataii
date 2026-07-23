@@ -546,3 +546,26 @@ def test_no_blind_exit_without_fair():
     d = eng.compute(mkt, book, spot, 20, 30.0, now)   # long 20, no fair known
     assert d.reason == "spot_stale"
     assert not d.crosses                                # held for settlement
+
+
+# --------------------------------------------------- strategy attribution
+
+def test_reason_stats_groups_by_strategy(tmp_path):
+    from mm.journal import Journal
+    j = Journal(str(tmp_path))
+    # Two pick fills (one good markout, one bad) + one maker fill.
+    p1 = j.record_fill("SOL", "T", "no", "buy", 5, 40, 5, 9.0, True, 55.0,
+                       "pick fair=55 bid=63")
+    p2 = j.record_fill("SOL", "T", "no", "buy", 5, 59, 5, 9.0, True, 26.0,
+                       "pick fair=26 bid=41")
+    m1 = j.record_fill("XRP", "T2", "yes", "buy", 5, 44, 5, 1.0, False, 46.0,
+                       "maker")
+    j.set_markout(p1, 6.0)
+    j.set_markout(p2, -22.0)
+    j.set_markout(m1, 2.0)
+    stats = j.reason_stats()
+    assert stats["pick"]["fills"] == 2
+    assert stats["pick"]["avg_markout_cents"] == -8.0   # (6 + -22)/2
+    assert stats["maker"]["fills"] == 1
+    assert stats["maker"]["avg_markout_cents"] == 2.0
+    j.close()
