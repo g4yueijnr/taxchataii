@@ -51,6 +51,11 @@ def make_app(bot) -> web.Application:
             "spot": spot,
             "markets": markets,
         }
+        if bot.cfg.dry_run:
+            body["sim"] = {
+                "bankroll_dollars": bot.cfg.sim_bankroll_dollars,
+                "equity_dollars": round(bot.sim_equity_cents / 100, 2),
+            }
         return web.json_response(body)
 
     async def stats(_req: web.Request) -> web.Response:

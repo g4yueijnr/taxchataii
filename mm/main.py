@@ -81,6 +81,12 @@ class Bot:
         self._pending_markouts: list[tuple[int, str, float, float, int]] = []
         self._coin_day_base: dict[str, float] = {}      # coin -> net at day start
         self._coin_day: dt.date = dt.date.today()
+        self._last_report = time.time()
+
+    @property
+    def sim_equity_cents(self) -> float:
+        """Paper account equity: bankroll + net P&L booked so far."""
+        return self.cfg.sim_bankroll_dollars * 100 + self.positions.net_pnl_cents
 
     # ----------------------------------------------------------- coin P&L
 
@@ -212,11 +218,31 @@ class Bot:
         self.sniper.prune(set(self.active))
         await self._resolve_settlements()
 
-        if not self.cfg.dry_run and self.rest.can_trade:
+        if self.cfg.dry_run:
+            self.risk.balance_cents = int(self.sim_equity_cents)
+        elif self.rest.can_trade:
             try:
                 self.risk.balance_cents = await self.rest.get_balance()
             except Exception as e:
                 log.warning("balance fetch failed: %s", e)
+
+        now2 = time.time()
+        if now2 - self._last_report >= 3600:
+            self._last_report = now2
+            hours = (now2 - self.started_at) / 3600
+            per_coin = {c.symbol: round(self.coin_net_cents(c.symbol), 1)
+                        for c in self.cfg.coins}
+            if self.cfg.dry_run:
+                log.info("[report %.1fh] $%.2f -> $%.2f | net %.1fc | "
+                         "fills %d | per-coin %s",
+                         hours, self.cfg.sim_bankroll_dollars,
+                         self.sim_equity_cents / 100,
+                         self.positions.net_pnl_cents,
+                         self.positions.fills, per_coin)
+            else:
+                log.info("[report %.1fh] net %.1fc | fills %d | per-coin %s",
+                         hours, self.positions.net_pnl_cents,
+                         self.positions.fills, per_coin)
 
     def _extract_strike(self, m: dict) -> float:
         for key in ("floor_strike", "cap_strike", "strike"):

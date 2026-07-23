@@ -61,6 +61,7 @@ class Config:
     # --- what to trade ---------------------------------------------------
     coins: list[CoinConfig] = field(default_factory=list)
     dry_run: bool = True
+    sim_bankroll_dollars: float = 100.0   # virtual capital in dry-run mode
 
     # --- quoting ---------------------------------------------------------
     quote_size: int = 5           # contracts per side
@@ -161,4 +162,8 @@ def load_config() -> Config:
         "MM_COIN_DAILY_LOSS_LIMIT", cfg.coin_daily_loss_limit_dollars)
     cfg.data_dir = os.environ.get("MM_DATA_DIR", cfg.data_dir)
     cfg.port = _env_int("PORT", cfg.port)
+    cfg.sim_bankroll_dollars = _env_float("MM_SIM_BANKROLL", cfg.sim_bankroll_dollars)
+    if cfg.dry_run:
+        # The paper account can't deploy more collateral than it has.
+        cfg.max_gross_dollars = min(cfg.max_gross_dollars, cfg.sim_bankroll_dollars)
     return cfg
