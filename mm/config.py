@@ -53,6 +53,7 @@ DEFAULT_COINS: dict[str, CoinConfig] = {
     # Kraken over Coinbase for NEAR: its BBO-triggered ticker keeps thin
     # coins fresh between trades.
     "NEAR": CoinConfig("NEAR", "KXNEAR15M", "kraken", "NEAR/USD"),
+    "HYPE": CoinConfig("HYPE", "KXHYPE15M", "coinbase", "HYPE-USD"),
 }
 
 
@@ -168,7 +169,7 @@ def load_config() -> Config:
     elif pem_path and Path(pem_path).exists():
         cfg.kalshi_private_key_pem = Path(pem_path).read_bytes()
 
-    coin_list = os.environ.get("MM_COINS", "DOGE,BNB,ZEC,NEAR")
+    coin_list = os.environ.get("MM_COINS", "BTC,ETH,SOL,XRP,BNB,DOGE,ZEC,NEAR,HYPE")
     for sym in [c.strip().upper() for c in coin_list.split(",") if c.strip()]:
         if sym in DEFAULT_COINS:
             cfg.coins.append(DEFAULT_COINS[sym])
