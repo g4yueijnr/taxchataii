@@ -220,6 +220,15 @@ class QuoteEngine:
         bid -= skew
         ask -= skew
 
+        # Trend guard: fair has been moving -> shift quotes WITH it so we
+        # ride the move instead of feeding liquidity into it (the falling-
+        # knife bids that lost $15 on BTC as its fair fell to ~9).
+        drift = self._fair_drift(mkt.ticker, fair, now)
+        trend = int(round(cfg.trend_skew_mult * drift))
+        trend = max(-cfg.max_trend_skew_cents, min(cfg.max_trend_skew_cents, trend))
+        bid += trend
+        ask += trend
+
         # Toxic-fill guard: never quote so far through our own fair that a
         # one-sided or absurdly-priced book fills us at a terrible price
         # (e.g. selling YES at 18c when fair is 49c). A generous band, so

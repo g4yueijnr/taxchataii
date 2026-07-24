@@ -70,10 +70,16 @@ class Config:
 
     # --- quoting ---------------------------------------------------------
     quote_size: int = 5           # contracts per side
-    max_position: int = 8         # max net contracts per market (either sign)
-                                  # (was 20: runaway +20 inventory drove the loss)
+    max_position: int = 6         # max net contracts per market (either sign)
     base_edge_cents: float = 1.0  # minimum half-spread beyond fees/buffers
-    min_capture_cents: int = 2    # min distance between our bid and our ask
+    min_capture_cents: int = 3    # min distance between our bid and our ask
+                                  # (3: only trade when the spread beats a
+                                  #  round trip of fees with margin)
+    # Trend guard: shift both quotes in the direction fair has been moving so
+    # we ride the trend instead of catching the knife (BTC fell to fair 8.8
+    # and our bids kept buying into it). Skew = mult * 30s fair drift, capped.
+    trend_skew_mult: float = 1.5
+    max_trend_skew_cents: int = 6
     as_vol_mult: float = 1.0      # adverse-selection buffer = mult * fair-value vol
                                   # (tightened so the maker actually competes
                                   #  for fills; 2.0 quoted so wide it never did)

@@ -758,3 +758,19 @@ def test_sim_fills_on_real_kalshi_trade_message():
     # YES traded at 46 >= our 45 ask -> we sell YES (buy NO) -> short.
     assert om.trades_parsed == 1 and om.trades_crossed == 1
     assert pb.pos("KXBTC15M-X").net == -10  # capped at our resting size
+
+
+def test_trend_guard_shifts_quotes_with_falling_fair():
+    """Falling fair (a downtrend) must shift our quotes DOWN so we stop
+    feeding bids into the drop -- the BTC falling-knife loss."""
+    cfg = Config()
+    mkt, now = make_mkt()
+    book = Book(mkt.ticker)
+    book.apply_snapshot({"yes": [[45, 20]], "no": [[47, 20]]})  # 45 / 53
+    spot = make_spot(price=0.1, sigma_per_sec=1e-3)             # fair ~50
+    eng = QuoteEngine(cfg)
+    eng._record_fair(mkt.ticker, 56.0, now - 30)               # was higher -> falling
+    falling = {o.side: o for o in eng.compute(mkt, book, spot, 0, None, now).desired}
+    eng2 = QuoteEngine(cfg)                                     # no trend history
+    flat = {o.side: o for o in eng2.compute(mkt, book, spot, 0, None, now).desired}
+    assert falling["yes"].price < flat["yes"].price            # bid shifted down
