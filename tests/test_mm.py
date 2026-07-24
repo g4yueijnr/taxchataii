@@ -726,3 +726,20 @@ def test_sim_derives_price_from_no_price_dollars():
     om.on_public_trade({"market_ticker": "T", "count": 4, "no_price": "0.4200"})
     assert pb.pos("T").net == -4
     assert om.trades_parsed == 1
+
+
+def test_sim_fills_on_real_kalshi_trade_message():
+    """Exact wire format from the live dashboard: yes_price_dollars +
+    count_fp. This is the message that was silently dropped 4828 times."""
+    cfg = Config()
+    pb = PositionBook()
+    om = SimOrderManager(cfg, pb)
+    from mm.strategy import DesiredOrder
+    asyncio.run(om.reconcile("KXBTC15M-X", [DesiredOrder("no", 55, 10)]))  # YES ask 45
+    om.on_public_trade({
+        "trade_id": "abc", "market_ticker": "KXBTC15M-X",
+        "yes_price_dollars": "0.4600", "no_price_dollars": "0.5400",
+        "count_fp": "109.34", "taker_side": "yes"})
+    # YES traded at 46 >= our 45 ask -> we sell YES (buy NO) -> short.
+    assert om.trades_parsed == 1 and om.trades_crossed == 1
+    assert pb.pos("KXBTC15M-X").net == -10  # capped at our resting size

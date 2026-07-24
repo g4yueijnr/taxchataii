@@ -122,7 +122,8 @@ class SimOrderManager(OrderManager):
         self.last_trade_sample = str(msg)[:300]   # always keep the latest
         ticker = msg.get("market_ticker") or msg.get("ticker") or ""
         try:
-            count = int(float(msg.get("count") or msg.get("count_dollars") or 0))
+            count = int(float(msg.get("count") or msg.get("count_fp")
+                              or msg.get("count_dollars") or 0))
         except (TypeError, ValueError):
             count = 0
         yes_price = _price_cents_from(msg, ("yes_price", "yes_price_dollars",
