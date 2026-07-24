@@ -75,11 +75,15 @@ class Config:
     min_capture_cents: int = 3    # min distance between our bid and our ask
                                   # (3: only trade when the spread beats a
                                   #  round trip of fees with margin)
-    # Trend guard: shift both quotes in the direction fair has been moving so
-    # we ride the trend instead of catching the knife (BTC fell to fair 8.8
-    # and our bids kept buying into it). Skew = mult * 30s fair drift, capped.
-    trend_skew_mult: float = 1.5
-    max_trend_skew_cents: int = 6
+    # Only make a market when the book spread is wide enough that capturing
+    # it beats a fee round trip with margin. Tight books (BTC's 2-3c) churn
+    # us to death on fees; profitable MM needs a real spread to capture.
+    min_book_spread_cents: int = 4
+    # Trend guard: gentle shift with 30s fair drift so we don't fight a real
+    # trend. Kept small -- at 1.5 it whipsawed us into buying above fair in
+    # choppy at-the-money markets.
+    trend_skew_mult: float = 0.4
+    max_trend_skew_cents: int = 4
     as_vol_mult: float = 1.0      # adverse-selection buffer = mult * fair-value vol
                                   # (tightened so the maker actually competes
                                   #  for fills; 2.0 quoted so wide it never did)

@@ -182,12 +182,14 @@ class QuoteEngine:
         have_ask = bool(book.no) and book.best_yes_ask < 100
         gap = max(cfg.min_capture_cents, 2)
         if have_bid and have_ask:
-            # Two-sided: rest just inside both touches (or AT them if there's
-            # no room), capturing the spread that exists.
+            # Two-sided: only make the market if the spread is wide enough to
+            # profit after fees; churning a 2-3c book just donates fees.
+            if book.best_yes_ask - book.best_yes_bid < cfg.min_book_spread_cents:
+                d.reason = "spread_too_tight"
+                return d
+            # Rest just inside both touches, capturing the spread.
             bid = book.best_yes_bid + 1
             ask = book.best_yes_ask - 1
-            if ask - bid < cfg.min_capture_cents:
-                bid, ask = book.best_yes_bid, book.best_yes_ask
         elif have_bid:
             # Only bids in the book: join the bid at the touch and make a
             # tight market just above it so BOTH sides sit where trading is.

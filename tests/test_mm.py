@@ -355,7 +355,7 @@ def test_extreme_zone_no_new_quotes():
     mkt, now = make_mkt()
     spot = make_spot(price=0.10045)
     book = Book(mkt.ticker)
-    book.apply_snapshot({"yes": [[95, 10]], "no": [[2, 10]]})  # mid 96.5
+    book.apply_snapshot({"yes": [[94, 10]], "no": [[2, 10]]})  # 94/98, mid 96
     d = eng.compute(mkt, book, spot, 5, 60.0, now)
     assert d.reason == "extreme_prob"
     assert not d.desired
