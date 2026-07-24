@@ -123,6 +123,9 @@ def _dashboard_html(bot) -> str:
         + (f"matcher parsed={s['matcher'].get('parsed',0)} "
            f"onOurMkt={s['matcher'].get('on_our_market',0)} "
            f"crossed={s['matcher'].get('crossed',0)} · " if s.get('matcher') else "")
+        + (f"</p><p class=m>trade msg: <code>"
+           f"{html.escape(s['matcher'].get('sample','')[:220])}</code>"
+           if s.get('matcher', {}).get('sample') else "")
         + (f"<b class=r>DATA ERROR: {html.escape(s['last_data_error'][:160])}"
            f"</b> · " if s["last_data_error"] else "")
         + f"status <b class={'r' if s['status'] != 'ok' else 'g'}>{s['status']}"

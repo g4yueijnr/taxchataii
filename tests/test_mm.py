@@ -696,3 +696,33 @@ def test_maker_quotes_competitively_on_one_sided_ask_book():
     assert yes_ask <= 38                       # at/inside the offer, competitive
     if "yes" in sides:
         assert sides["yes"].price < yes_ask    # bid below ask, no self-cross
+
+
+def test_sim_fills_on_dollar_format_trade_prices():
+    """The parsed=0 bug: Kalshi trade prices arrive as dollar strings/floats
+    ('0.41' not 41). The matcher must convert and still fill."""
+    cfg = Config()
+    pb = PositionBook()
+    om = SimOrderManager(cfg, pb)
+    from mm.strategy import DesiredOrder
+    asyncio.run(om.reconcile("T", [DesiredOrder("yes", 42, 5)]))
+    # Dollar-string price 0.41 -> 41c, crosses our 42 bid.
+    om.on_public_trade({"market_ticker": "T", "count": 3, "yes_price": "0.4100"})
+    assert pb.pos("T").net == 3
+    assert om.trades_parsed == 1 and om.trades_crossed == 1
+    # Dollar float works too.
+    asyncio.run(om.reconcile("T", [DesiredOrder("yes", 42, 5)]))
+    om.on_public_trade({"market_ticker": "T", "count": 2, "yes_price": 0.40})
+    assert pb.pos("T").net == 5
+
+
+def test_sim_derives_price_from_no_price_dollars():
+    cfg = Config()
+    pb = PositionBook()
+    om = SimOrderManager(cfg, pb)
+    from mm.strategy import DesiredOrder
+    asyncio.run(om.reconcile("T", [DesiredOrder("no", 45, 5)]))  # sell YES @55
+    # Only no_price given as dollars: 0.42 -> 42c no -> yes 58, >= our 55 ask.
+    om.on_public_trade({"market_ticker": "T", "count": 4, "no_price": "0.4200"})
+    assert pb.pos("T").net == -4
+    assert om.trades_parsed == 1

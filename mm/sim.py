@@ -26,6 +26,29 @@ log = logging.getLogger("mm.sim")
 _ids = itertools.count(1)
 
 
+def _price_cents_from(msg: dict, keys: tuple) -> int | None:
+    """Extract a Kalshi price in whole cents (1-99) from the first present
+    key, accepting integer cents (51), dollar floats (0.51) and dollar
+    strings ('0.5100') — Kalshi migrated prices to dollar strings."""
+    for k in keys:
+        v = msg.get(k)
+        if v is None:
+            continue
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            continue
+        if 0 < f < 1:            # dollars, e.g. 0.51
+            c = int(round(f * 100))
+        elif 1 <= f <= 99:       # cents, e.g. 51 or 51.0
+            c = int(round(f))
+        else:
+            continue
+        if 1 <= c <= 99:
+            return c
+    return None
+
+
 class SimOrderManager(OrderManager):
     def __init__(self, cfg: Config, book: PositionBook):
         # No REST client needed; everything happens locally.
@@ -96,13 +119,17 @@ class SimOrderManager(OrderManager):
         Our bid < ask always, so a single print can trigger at most one.
         """
         self.trades_seen += 1
-        if self.trades_seen <= 3 or not self.last_trade_sample:
-            self.last_trade_sample = str(msg)[:300]
+        self.last_trade_sample = str(msg)[:300]   # always keep the latest
         ticker = msg.get("market_ticker") or msg.get("ticker") or ""
-        count = int(msg.get("count", 0) or 0)
-        yes_price = int(msg.get("yes_price") or 0)
-        if yes_price <= 0 and msg.get("no_price"):
-            yes_price = 100 - int(msg["no_price"])
+        try:
+            count = int(float(msg.get("count") or msg.get("count_dollars") or 0))
+        except (TypeError, ValueError):
+            count = 0
+        yes_price = _price_cents_from(msg, ("yes_price", "yes_price_dollars",
+                                            "price", "price_dollars"))
+        if yes_price is None:
+            nc = _price_cents_from(msg, ("no_price", "no_price_dollars"))
+            yes_price = (100 - nc) if nc is not None else 0
         if not ticker or count <= 0 or not (1 <= yes_price <= 99):
             return
         self.trades_parsed += 1
