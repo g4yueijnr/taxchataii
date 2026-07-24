@@ -78,28 +78,35 @@ class SimOrderManager(OrderManager):
         log.info("[sim] cross %s buy %s %d@%dc (%s)", ticker, c.side, size,
                  c.limit_price, c.reason)
 
+    trades_seen: int = 0
+
     def on_public_trade(self, msg: dict) -> None:
-        """Match the public tape against our virtual resting orders."""
+        """Match the public tape against our virtual resting orders.
+
+        Price-based (robust to a missing/renamed taker_side field, which was
+        silently zeroing all maker fills): a trade printing at yes_price P
+        fills our resting YES bid B if P <= B (a sell swept down to/through
+        our bid), and fills our resting NO bid N — i.e. sells our YES at the
+        100-N ask — if 100-P <= N (a buy lifted up to/through our offer).
+        Our bid < ask always, so a single print can trigger at most one.
+        """
+        self.trades_seen += 1
         ticker = msg.get("market_ticker", "")
-        count = int(msg.get("count", 0))
-        yes_price = int(msg.get("yes_price", 0))
-        taker_side = msg.get("taker_side", "")
-        if not ticker or count <= 0:
+        count = int(msg.get("count", 0) or 0)
+        yes_price = int(msg.get("yes_price") or 0)
+        if not ticker or count <= 0 or not (1 <= yes_price <= 99):
             return
         orders = self.orders_for(ticker)
 
-        if taker_side == "no":
-            # Taker bought NO == sold YES into the bids at yes_price.
-            o = orders.get("yes")
-            if o and yes_price <= o.price:
-                self._fill(ticker, o, min(count, o.size), o.price, 100 - o.price)
-        elif taker_side == "yes":
-            # Taker bought YES == sold NO into NO bids at no_price.
-            o = orders.get("no")
-            no_price = 100 - yes_price
-            if o and no_price <= o.price:
-                self._fill(ticker, o, min(count, o.size), 100 - o.price, o.price,
-                           side="no")
+        yo = orders.get("yes")
+        if yo and yes_price <= yo.price:
+            self._fill(ticker, yo, min(count, yo.size), yo.price,
+                       100 - yo.price, side="yes")
+            return
+        no = orders.get("no")
+        if no and (100 - yes_price) <= no.price:
+            self._fill(ticker, no, min(count, no.size), 100 - no.price,
+                       no.price, side="no")
 
     def _fill(self, ticker: str, order: LiveOrder, count: int,
               yes_price: int, no_price: int, side: str = "yes") -> None:

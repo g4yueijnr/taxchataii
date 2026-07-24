@@ -640,3 +640,23 @@ def test_sniper_rejects_implausible_edge():
     book2 = Book("T")
     book2.apply_snapshot({"yes": [[5, 20]], "no": [[10, 50]]})  # YES ask 90c
     assert sn2.evaluate(mkt, book2, spot, strike_is_proxy=False, now=now) is not None
+
+
+def test_sim_fills_without_taker_side_field():
+    """The 0-fills bug: Kalshi trade messages that lack a taker_side field
+    must STILL fill our resting quotes based on price crossing alone."""
+    cfg = Config()
+    pb = PositionBook()
+    om = SimOrderManager(cfg, pb)
+    from mm.strategy import DesiredOrder
+    asyncio.run(om.reconcile("T", [DesiredOrder("yes", 42, 5),
+                                   DesiredOrder("no", 45, 5)]))  # bid42 / ask55
+    # Trade prints at 40 (a sell sweeping the bids) with NO taker_side:
+    # must fill our YES bid at 42.
+    om.on_public_trade({"market_ticker": "T", "count": 3, "yes_price": 40})
+    assert pb.pos("T").net == 3 and pb.pos("T").avg_entry == 42.0
+    # Trade prints at 56 (a buy lifting offers), no taker_side: fills our
+    # NO bid at 45 (selling YES at 55).
+    om.on_public_trade({"market_ticker": "T", "count": 2, "yes_price": 56})
+    assert pb.pos("T").net == 1        # +3 then -2
+    assert om.trades_seen == 2

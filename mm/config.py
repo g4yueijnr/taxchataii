@@ -105,10 +105,10 @@ class Config:
 
     # --- adverse-selection circuit breakers ------------------------------
     spot_stale_seconds: float = 3.0    # pull quotes if the spot feed goes quiet
-    vol_spike_mult: float = 15.0       # pull quotes when 30s vol > mult * baseline
-                                       # (high: a maker should quote through
-                                       #  normal chop, only bail on real shocks)
-    vol_spike_cooldown: float = 5.0    # seconds to stay out after a spike
+    vol_spike_mult: float = 25.0       # pull quotes when 30s vol > mult * baseline
+                                       # (very high: a maker earns by quoting
+                                       #  through chop; only bail on real shocks)
+    vol_spike_cooldown: float = 4.0    # seconds to stay out after a spike
     scratch_cents: int = 6             # cross out if fair moves this far against inventory
                                        # (raised: +18c scratch markouts showed we
                                        #  were realizing losses that then reverted)

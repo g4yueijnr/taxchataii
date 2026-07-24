@@ -82,6 +82,7 @@ class Bot:
         self._coin_day_base: dict[str, float] = {}      # coin -> net at day start
         self._coin_day: dt.date = dt.date.today()
         self._last_report = time.time()
+        self.market_trades = 0        # public trades observed across all markets
         self._last_trade_ts: dict[str, float] = {}      # REST tape cursor
         self.last_data_error: str = ""                  # surfaced on dashboard
 
@@ -159,6 +160,7 @@ class Bot:
             st.dirty = True
 
     async def _on_trade(self, msg: dict) -> None:
+        self.market_trades += 1
         if self.cfg.dry_run and isinstance(self.om, SimOrderManager):
             self.om.on_public_trade(msg)
         st = self.active.get(msg.get("market_ticker", ""))

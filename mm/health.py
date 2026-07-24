@@ -58,6 +58,7 @@ def _status_body(bot) -> dict:
             "daily_cents": round(bot.risk.daily_pnl_cents, 1),
             "fills": bot.positions.fills,
         },
+        "market_trades_seen": getattr(bot, "market_trades", 0),
         "coins": {
             c.symbol: {"net_cents": round(bot.coin_net_cents(c.symbol), 1),
                        "benched": c.symbol in bot.risk.benched_coins}
@@ -112,6 +113,7 @@ def _dashboard_html(bot) -> str:
         f"{pnl['fills']} fills · fees {pnl['fees_cents']:.1f}c · "
         f"kalshi data <b class={'g' if s['data_mode'] == 'websocket' else 'y'}>"
         f"{s['data_mode']}</b> · "
+        f"market trades seen <b>{s.get('market_trades_seen', 0)}</b> · "
         + (f"<b class=r>DATA ERROR: {html.escape(s['last_data_error'][:160])}"
            f"</b> · " if s["last_data_error"] else "")
         + f"status <b class={'r' if s['status'] != 'ok' else 'g'}>{s['status']}"
