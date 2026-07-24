@@ -660,3 +660,39 @@ def test_sim_fills_without_taker_side_field():
     om.on_public_trade({"market_ticker": "T", "count": 2, "yes_price": 56})
     assert pb.pos("T").net == 1        # +3 then -2
     assert om.trades_seen == 2
+
+
+def test_maker_quotes_competitively_on_one_sided_bid_book():
+    """BTC-style: only bids in the book (55 / —). Old code fell to fair-seed
+    and quoted ~45 (off-market). Now we join the bid at the touch so trades
+    at the bid actually fill us."""
+    cfg = Config()
+    eng = QuoteEngine(cfg)
+    mkt, now = make_mkt()
+    spot = make_spot(price=0.0996)          # fair below the market
+    book = Book(mkt.ticker)
+    book.apply_snapshot({"yes": [[55, 20]]})  # only a YES bid at 55, no offers
+    d = eng.compute(mkt, book, spot, 0, None, now)
+    assert d.reason == "quoting"
+    sides = {o.side: o for o in d.desired}
+    assert "yes" in sides
+    assert sides["yes"].price >= 55           # at/above the touch, competitive
+
+
+def test_maker_quotes_competitively_on_one_sided_ask_book():
+    """XRP-style: only offers (— / 38). Join the ask so buys at ~38 fill us,
+    and don't post a bid above the ask (no self-cross)."""
+    cfg = Config()
+    eng = QuoteEngine(cfg)
+    mkt, now = make_mkt()
+    spot = make_spot(price=0.10)
+    book = Book(mkt.ticker)
+    book.apply_snapshot({"no": [[62, 20]]})   # NO bid 62 -> YES ask 38, no bids
+    d = eng.compute(mkt, book, spot, 0, None, now)
+    assert d.reason == "quoting"
+    sides = {o.side: o for o in d.desired}
+    assert "no" in sides
+    yes_ask = 100 - sides["no"].price
+    assert yes_ask <= 38                       # at/inside the offer, competitive
+    if "yes" in sides:
+        assert sides["yes"].price < yes_ask    # bid below ask, no self-cross

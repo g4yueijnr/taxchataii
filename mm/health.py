@@ -59,6 +59,12 @@ def _status_body(bot) -> dict:
             "fills": bot.positions.fills,
         },
         "market_trades_seen": getattr(bot, "market_trades", 0),
+        "matcher": ({
+            "parsed": bot.om.trades_parsed,
+            "on_our_market": bot.om.trades_on_our_market,
+            "crossed": bot.om.trades_crossed,
+            "sample": bot.om.last_trade_sample,
+        } if bot.cfg.dry_run and hasattr(bot.om, "trades_parsed") else {}),
         "coins": {
             c.symbol: {"net_cents": round(bot.coin_net_cents(c.symbol), 1),
                        "benched": c.symbol in bot.risk.benched_coins}
@@ -114,6 +120,9 @@ def _dashboard_html(bot) -> str:
         f"kalshi data <b class={'g' if s['data_mode'] == 'websocket' else 'y'}>"
         f"{s['data_mode']}</b> · "
         f"market trades seen <b>{s.get('market_trades_seen', 0)}</b> · "
+        + (f"matcher parsed={s['matcher'].get('parsed',0)} "
+           f"onOurMkt={s['matcher'].get('on_our_market',0)} "
+           f"crossed={s['matcher'].get('crossed',0)} · " if s.get('matcher') else "")
         + (f"<b class=r>DATA ERROR: {html.escape(s['last_data_error'][:160])}"
            f"</b> · " if s["last_data_error"] else "")
         + f"status <b class={'r' if s['status'] != 'ok' else 'g'}>{s['status']}"
@@ -221,6 +230,10 @@ def make_app(bot) -> web.Application:
             "ws_last_error": bot.ws.last_error,
             "ws_last_snapshot_raw": bot.ws.last_snapshot_raw,
             "ws_last_delta_raw": bot.ws.last_delta_raw,
+            "trade_sample": getattr(bot.om, "last_trade_sample", ""),
+            "matcher_parsed": getattr(bot.om, "trades_parsed", 0),
+            "matcher_on_our_market": getattr(bot.om, "trades_on_our_market", 0),
+            "matcher_crossed": getattr(bot.om, "trades_crossed", 0),
             "last_data_error": bot.last_data_error,
             "subscribed_markets": sorted(bot.ws._tickers),
             "ws_gap_resyncs": bot.ws.gap_resyncs,

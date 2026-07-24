@@ -78,7 +78,12 @@ class SimOrderManager(OrderManager):
         log.info("[sim] cross %s buy %s %d@%dc (%s)", ticker, c.side, size,
                  c.limit_price, c.reason)
 
+    # Diagnostics for the "flow but no fills" investigation.
     trades_seen: int = 0
+    trades_parsed: int = 0        # had ticker + valid yes_price
+    trades_on_our_market: int = 0  # we had a resting order on that ticker
+    trades_crossed: int = 0       # price crossed one of our quotes -> fill
+    last_trade_sample: str = ""
 
     def on_public_trade(self, msg: dict) -> None:
         """Match the public tape against our virtual resting orders.
@@ -91,20 +96,29 @@ class SimOrderManager(OrderManager):
         Our bid < ask always, so a single print can trigger at most one.
         """
         self.trades_seen += 1
-        ticker = msg.get("market_ticker", "")
+        if self.trades_seen <= 3 or not self.last_trade_sample:
+            self.last_trade_sample = str(msg)[:300]
+        ticker = msg.get("market_ticker") or msg.get("ticker") or ""
         count = int(msg.get("count", 0) or 0)
         yes_price = int(msg.get("yes_price") or 0)
+        if yes_price <= 0 and msg.get("no_price"):
+            yes_price = 100 - int(msg["no_price"])
         if not ticker or count <= 0 or not (1 <= yes_price <= 99):
             return
+        self.trades_parsed += 1
         orders = self.orders_for(ticker)
+        if orders:
+            self.trades_on_our_market += 1
 
         yo = orders.get("yes")
         if yo and yes_price <= yo.price:
+            self.trades_crossed += 1
             self._fill(ticker, yo, min(count, yo.size), yo.price,
                        100 - yo.price, side="yes")
             return
         no = orders.get("no")
         if no and (100 - yes_price) <= no.price:
+            self.trades_crossed += 1
             self._fill(ticker, no, min(count, no.size), 100 - no.price,
                        no.price, side="no")
 

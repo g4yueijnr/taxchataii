@@ -175,35 +175,52 @@ class QuoteEngine:
         # pushed us off-book, so we never filled). Adverse-selection defence
         # is the vol-spike / stale-spot guards above plus the scratch/flatten
         # exits, not a fat fair-value buffer that keeps us from ever trading.
-        if book.yes and book.no and not book.crossed:
-            if book.mid < 5 or book.mid > 95:
-                d.reason = "extreme_prob"     # binary pinned; nothing to make
-                return d
-            inside_bid = book.best_yes_bid + 1
-            inside_ask = book.best_yes_ask - 1
-            if inside_ask - inside_bid < cfg.min_capture_cents:
-                # No room to improve; sit AT the touch and capture the raw
-                # spread if it still clears the min-capture (fee) threshold.
-                inside_bid = book.best_yes_bid
-                inside_ask = book.best_yes_ask
-            skew = int(round(cfg.inventory_skew_cents * position
-                             / max(cfg.max_position, 1)))
-            bid = inside_bid - skew           # long -> lower both, sell eager
-            ask = inside_ask - skew
-            bid = min(bid, book.best_yes_ask - 1)   # never cross / take
-            ask = max(ask, book.best_yes_bid + 1)
+        if book.crossed:
+            d.reason = "book_invalid"
+            return d
+        have_bid = bool(book.yes) and book.best_yes_bid > 0
+        have_ask = bool(book.no) and book.best_yes_ask < 100
+        gap = max(cfg.min_capture_cents, 2)
+        if have_bid and have_ask:
+            # Two-sided: rest just inside both touches (or AT them if there's
+            # no room), capturing the spread that exists.
+            bid = book.best_yes_bid + 1
+            ask = book.best_yes_ask - 1
+            if ask - bid < cfg.min_capture_cents:
+                bid, ask = book.best_yes_bid, book.best_yes_ask
+        elif have_bid:
+            # Only bids in the book: join the bid at the touch and make a
+            # tight market just above it so BOTH sides sit where trading is.
+            bid = book.best_yes_bid + 1
+            ask = bid + gap
+        elif have_ask:
+            # Only offers: join the ask at the touch, bid just below it.
+            ask = book.best_yes_ask - 1
+            bid = ask - gap
         else:
-            # No book yet: seed a market from fair value so there's a two-
-            # sided quote for others to trade against.
+            # Empty book: seed a market from fair value.
             if fair < 5 or fair > 95:
                 d.reason = "extreme_prob"
                 return d
             half = (cfg.base_edge_cents
                     + maker_fee_per_contract(int(round(fair)) or 1, cfg.maker_fee_mult)
                     + cfg.as_vol_mult * fv_vol)
-            skew = cfg.inventory_skew_cents * (position / max(cfg.max_position, 1))
-            bid = int(math.floor(fair - half - skew))
-            ask = int(math.ceil(fair + half - skew))
+            bid = int(math.floor(fair - half))
+            ask = int(math.ceil(fair + half))
+
+        # Pinned binary: nothing to make.
+        ref = (bid + ask) / 2
+        if ref < 5 or ref > 95:
+            d.reason = "extreme_prob"
+            return d
+
+        # Inventory skew: long -> shift both down (sell eagerly), short -> up.
+        skew = int(round(cfg.inventory_skew_cents * position
+                         / max(cfg.max_position, 1)))
+        bid -= skew
+        ask -= skew
+        bid = max(1, min(bid, 98))
+        ask = min(99, max(ask, bid + cfg.min_capture_cents))
 
         if ask - bid < cfg.min_capture_cents:
             d.reason = "spread_too_tight"
