@@ -70,13 +70,18 @@ class Config:
 
     # --- quoting ---------------------------------------------------------
     quote_size: int = 5           # contracts per side
-    max_position: int = 20        # max net contracts per market (either sign)
+    max_position: int = 8         # max net contracts per market (either sign)
+                                  # (was 20: runaway +20 inventory drove the loss)
     base_edge_cents: float = 1.0  # minimum half-spread beyond fees/buffers
     min_capture_cents: int = 2    # min distance between our bid and our ask
     as_vol_mult: float = 1.0      # adverse-selection buffer = mult * fair-value vol
                                   # (tightened so the maker actually competes
                                   #  for fills; 2.0 quoted so wide it never did)
-    inventory_skew_cents: float = 2.0   # extra skew at full inventory
+    inventory_skew_cents: float = 6.0   # extra skew at full inventory (strong:
+                                        # actively flatten, don't build a bag)
+    fair_sanity_band_cents: int = 6     # never quote so far through fair that a
+                                        # one-sided/absurd book fills us at a
+                                        # toxic price (kills the big-loss fills)
     improve_tick: bool = True     # step 1c inside the current best when profitable
     # Anchor quotes to the MARKET (book mid), not our independent fair —
     # quoting around our own opinion when it disagrees with the book leaves

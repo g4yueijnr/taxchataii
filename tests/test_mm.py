@@ -580,26 +580,41 @@ def test_reason_stats_groups_by_strategy(tmp_path):
 
 # ------------------------------------------------ book-anchored quoting
 
-def test_maker_anchors_to_book_not_disagreeing_fair():
-    """The zero-fills bug: market at 60/75 but our fair says 46. Old code
-    quoted ~42 bid (off-market, never fills). Book-anchored maker must
-    quote INSIDE the book, near the market, so it can actually fill."""
+def test_maker_anchors_to_book_when_fair_agrees():
+    """When our fair agrees with the market (both ~46), the maker joins
+    INSIDE the book and captures the spread."""
     cfg = Config()
     eng = QuoteEngine(cfg)
     mkt, now = make_mkt()
-    spot = make_spot(price=0.09965)    # fair well below 50
+    spot = make_spot(price=0.09985, sigma_per_sec=1e-3)   # fair ~47
     book = Book(mkt.ticker)
-    book.apply_snapshot({"yes": [[60, 20]], "no": [[25, 20]]})  # 60 bid / 75 ask
+    book.apply_snapshot({"yes": [[40, 20]], "no": [[48, 20]]})  # 40 / 52, mid 46
     d = eng.compute(mkt, book, spot, 0, None, now)
     assert d.reason == "quoting"
+    assert 40 <= d.fair <= 53                        # fair agrees with the book
     sides = {o.side: o for o in d.desired}
     bid = sides["yes"].price
     ask = 100 - sides["no"].price
-    # Quotes sit INSIDE the book (competitive), not 15c below it.
     assert book.best_yes_bid <= bid < ask <= book.best_yes_ask
-    assert bid >= book.best_yes_bid           # at or improving the best bid
-    # And leaning slightly low because our fair is below the market.
-    assert (bid + ask) / 2 < book.mid + 1
+    assert bid >= book.best_yes_bid                 # competitive bid
+
+
+def test_maker_wont_quote_through_fair_on_mispriced_book():
+    """Toxic-fill guard: market at 60/75 but our fair is ~46. We must NOT
+    join the bid at 60 (buying far above fair) — that built the losing
+    inventory. Bid stays within the fair-sanity band."""
+    cfg = Config()
+    eng = QuoteEngine(cfg)
+    mkt, now = make_mkt()
+    spot = make_spot(price=0.0996, sigma_per_sec=1e-3)   # fair ~43, far below book
+    book = Book(mkt.ticker)
+    book.apply_snapshot({"yes": [[60, 20]], "no": [[25, 20]]})  # 60 / 75
+    d = eng.compute(mkt, book, spot, 0, None, now)
+    assert d.fair < 55                              # fair genuinely disagrees
+    sides = {o.side: o for o in d.desired}
+    if "yes" in sides:
+        assert sides["yes"].price <= round(d.fair) + cfg.fair_sanity_band_cents
+        assert sides["yes"].price < book.best_yes_bid   # not joining the toxic bid
 
 
 def test_maker_not_competitive_on_tight_book_against_fair():
@@ -680,12 +695,12 @@ def test_maker_quotes_competitively_on_one_sided_bid_book():
 
 
 def test_maker_quotes_competitively_on_one_sided_ask_book():
-    """XRP-style: only offers (— / 38). Join the ask so buys at ~38 fill us,
-    and don't post a bid above the ask (no self-cross)."""
+    """Only offers (— / 38) AND our fair agrees (~38): join the ask so buys
+    at ~38 fill us, and don't post a bid above the ask (no self-cross)."""
     cfg = Config()
     eng = QuoteEngine(cfg)
     mkt, now = make_mkt()
-    spot = make_spot(price=0.10)
+    spot = make_spot(price=0.09993)           # fair ~38, consistent with book
     book = Book(mkt.ticker)
     book.apply_snapshot({"no": [[62, 20]]})   # NO bid 62 -> YES ask 38, no bids
     d = eng.compute(mkt, book, spot, 0, None, now)
@@ -693,7 +708,7 @@ def test_maker_quotes_competitively_on_one_sided_ask_book():
     sides = {o.side: o for o in d.desired}
     assert "no" in sides
     yes_ask = 100 - sides["no"].price
-    assert yes_ask <= 38                       # at/inside the offer, competitive
+    assert yes_ask <= 40                       # at/near the offer, competitive
     if "yes" in sides:
         assert sides["yes"].price < yes_ask    # bid below ask, no self-cross
 

@@ -219,6 +219,18 @@ class QuoteEngine:
                          / max(cfg.max_position, 1)))
         bid -= skew
         ask -= skew
+
+        # Toxic-fill guard: never quote so far through our own fair that a
+        # one-sided or absurdly-priced book fills us at a terrible price
+        # (e.g. selling YES at 18c when fair is 49c). A generous band, so
+        # normal book-joining near fair is untouched — this only clips the
+        # egregious fills that drove the big losses.
+        band = cfg.fair_sanity_band_cents
+        if 5 <= fair <= 95:
+            fair_i = int(round(fair))
+            bid = min(bid, fair_i + band)     # don't buy far above fair
+            ask = max(ask, fair_i - band)     # don't sell far below fair
+
         bid = max(1, min(bid, 98))
         ask = min(99, max(ask, bid + cfg.min_capture_cents))
 
