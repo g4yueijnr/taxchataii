@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Kalshi ⇄ Polymarket Arbitrage Finder</title>
+<style>
+  :root {
+    --bg: #0b0e14; --panel: #131824; --panel2: #0f141e; --border: #232b3a;
+    --text: #e6edf3; --muted: #8b98ab; --accent: #35d07f; --accent2: #4c9aff;
+    --warn: #f0b429; --bad: #ff5c5c; --chip: #1c2434;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    padding: 22px 24px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  }
+  header h1 { font-size: 19px; margin: 0; font-weight: 650; }
+  header .sub { color: var(--muted); font-size: 13px; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 24px; }
+  .grid { display: grid; grid-template-columns: 340px 1fr; gap: 22px; align-items: start; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 18px;
+  }
+  .card h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--muted); margin: 0 0 14px; font-weight: 650; }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 12px 0 5px; }
+  input, textarea, select {
+    width: 100%; background: var(--panel2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px;
+    font: inherit; font-size: 13px;
+  }
+  textarea { resize: vertical; min-height: 74px; font-family: ui-monospace, monospace; }
+  input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
+  .row { display: flex; gap: 10px; }
+  .row > * { flex: 1; }
+  button {
+    background: var(--accent); color: #04140b; border: none; border-radius: 8px;
+    padding: 11px 16px; font: inherit; font-weight: 650; cursor: pointer;
+    width: 100%; margin-top: 14px;
+  }
+  button.secondary { background: var(--chip); color: var(--text); border: 1px solid var(--border); }
+  button.buy { width: auto; margin: 0; padding: 7px 13px; font-size: 13px; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px;
+    font-weight: 650; background: var(--chip); color: var(--muted); }
+  .pill.ok { color: var(--accent); }
+  .pill.off { color: var(--muted); }
+  .stat-row { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 16px; }
+  .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 16px; min-width: 110px; }
+  .stat .n { font-size: 22px; font-weight: 700; }
+  .stat .l { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .opp { background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px; margin-bottom: 12px; }
+  .opp.top { border-color: var(--accent); }
+  .opp-head { display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    margin-bottom: 12px; flex-wrap: wrap; }
+  .edge { font-size: 20px; font-weight: 750; color: var(--accent); }
+  .legs { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  @media (max-width: 620px) { .legs { grid-template-columns: 1fr; } }
+  .leg { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 11px; }
+  .leg .venue { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .leg .action { font-size: 15px; font-weight: 650; margin: 3px 0; }
+  .leg a { color: var(--accent2); text-decoration: none; font-size: 12px; word-break: break-all; }
+  .leg a:hover { text-decoration: underline; }
+  .meta { color: var(--muted); font-size: 12px; margin-top: 10px; display: flex;
+    justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: center; }
+  .warn { color: var(--warn); }
+  .msg { padding: 11px 14px; border-radius: 8px; margin: 12px 0; font-size: 13px; }
+  .msg.err { background: #2a1414; border: 1px solid #5b2626; color: #ff9c9c; }
+  .msg.info { background: #101a26; border: 1px solid #223349; color: #9dc0e6; }
+  .spin { display: inline-block; width: 15px; height: 15px; border: 2px solid #04140b40;
+    border-top-color: #04140b; border-radius: 50%; animation: spin .7s linear infinite;
+    vertical-align: -2px; margin-right: 7px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  details summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+  code { background: var(--chip); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  .disclaimer { color: var(--muted); font-size: 12px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Kalshi ⇄ Polymarket</h1>
+  <span class="sub">cross-venue arbitrage finder · buy YES on one + NO on the other for under $1</span>
+</header>
+
+<div class="wrap">
+  <div class="grid">
+    <!-- ------------------------------------------------------ left column -->
+    <div>
+      <div class="card">
+        <h2>Keys <span id="keyStatus"></span></h2>
+        <p class="disclaimer">Optional for scanning — market data is public.
+          Needed only to click <b>Buy both legs</b>. Kept in server memory only.</p>
+
+        <label>Kalshi API Key ID</label>
+        <input id="k_id" placeholder="uuid from kalshi.com → API keys" autocomplete="off" />
+
+        <label>Kalshi RSA Private Key (PEM)</label>
+        <textarea id="k_pem" placeholder="-----BEGIN RSA PRIVATE KEY-----&#10;...&#10;-----END RSA PRIVATE KEY-----" autocomplete="off"></textarea>
+
+        <label>Polymarket Wallet Private Key</label>
+        <input id="p_key" type="password" placeholder="0x… Polygon key holding your USDC" autocomplete="off" />
+
+        <div class="row">
+          <div>
+            <label>Poly Funder Address</label>
+            <input id="p_funder" placeholder="0x… (proxy wallet)" autocomplete="off" />
+          </div>
+          <div>
+            <label>Sig type</label>
+            <select id="p_sig">
+              <option value="1">1 · email</option>
+              <option value="2">2 · browser</option>
+              <option value="0">0 · EOA</option>
+            </select>
+          </div>
+        </div>
+        <button class="secondary" onclick="saveKeys()">Save keys</button>
+      </div>
+
+      <div class="card" style="margin-top:18px;">
+        <h2>Scan settings</h2>
+        <div class="row">
+          <div>
+            <label>Min edge (¢)</label>
+            <input id="s_edge" type="number" value="2" min="0" step="1" />
+          </div>
+          <div>
+            <label>Min volume</label>
+            <input id="s_vol" type="number" value="1000" min="0" step="100" />
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label>Match score</label>
+            <input id="s_score" type="number" value="90" min="50" max="100" />
+          </div>
+          <div>
+            <label>Trade size</label>
+            <input id="s_size" type="number" value="10" min="1" />
+          </div>
+        </div>
+        <button onclick="scan()" id="scanBtn">⚡ Scan for arbitrage</button>
+        <p class="disclaimer">A full scan pages every market on both venues —
+          give it 15–40s. Higher min-volume = faster.</p>
+      </div>
+    </div>
+
+    <!-- ----------------------------------------------------- right column -->
+    <div>
+      <div id="stats" class="stat-row" style="display:none;"></div>
+      <div id="messages"></div>
+      <div id="results">
+        <div class="msg info">Enter settings on the left and hit
+          <b>Scan for arbitrage</b>. No keys required to scan.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let lastSize = 10;
+
+async function api(path, body) {
+  const r = await fetch(path, {
+    method: body ? 'POST' : 'GET',
+    headers: {'Content-Type': 'application/json'},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || ('HTTP ' + r.status));
+  return data;
+}
+
+function renderKeyStatus(s) {
+  const chip = (on, txt) => `<span class="pill ${on?'ok':'off'}">${on?'●':'○'} ${txt}</span>`;
+  $('keyStatus').innerHTML =
+    chip(s.can_trade_kalshi, 'Kalshi') + ' ' + chip(s.can_trade_poly, 'Poly');
+}
+
+async function loadStatus() {
+  try {
+    const s = await api('/api/status');
+    renderKeyStatus(s);
+    if (s.poly_funder) $('p_funder').value = s.poly_funder;
+    if (s.poly_sig_type) $('p_sig').value = s.poly_sig_type;
+  } catch (e) {}
+}
+
+async function saveKeys() {
+  try {
+    const s = await api('/api/keys', {
+      kalshi_api_key_id: $('k_id').value,
+      kalshi_private_key: $('k_pem').value,
+      polymarket_private_key: $('p_key').value,
+      polymarket_funder: $('p_funder').value,
+      polymarket_sig_type: $('p_sig').value,
+    });
+    renderKeyStatus(s);
+    msg('info', 'Keys saved to server memory.');
+  } catch (e) { msg('err', 'Could not save keys: ' + e.message); }
+}
+
+function msg(kind, html) {
+  $('messages').innerHTML = `<div class="msg ${kind}">${html}</div>`;
+}
+
+async function scan() {
+  const btn = $('scanBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin"></span>Scanning both venues…';
+  $('messages').innerHTML = '';
+  lastSize = Math.max(1, parseInt($('s_size').value) || 10);
+  try {
+    const data = await api('/api/scan', {
+      min_edge: (parseFloat($('s_edge').value) || 0) / 100,
+      min_volume: parseFloat($('s_vol').value) || 0,
+      min_score: parseFloat($('s_score').value) || 90,
+      fresh_prices: true,
+    });
+    renderStats(data);
+    (data.errors || []).forEach(e => msg('info', '⚠ ' + e));
+    renderOpps(data.opportunities);
+  } catch (e) {
+    msg('err', 'Scan failed: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '⚡ Scan for arbitrage';
+  }
+}
+
+function renderStats(d) {
+  $('stats').style.display = 'flex';
+  const stat = (n, l) => `<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`;
+  $('stats').innerHTML =
+    stat(d.kalshi_markets, 'Kalshi mkts') +
+    stat(d.poly_markets, 'Poly mkts') +
+    stat(d.matched_pairs, 'Matched') +
+    stat(d.opportunities.length, 'Arb plays');
+}
+
+function renderOpps(opps) {
+  if (!opps.length) {
+    $('results').innerHTML = '<div class="msg info">No arbitrage above your edge threshold right now. Lower the min-volume or min-edge and rescan.</div>';
+    return;
+  }
+  $('results').innerHTML = opps.map((o, i) => {
+    const conf = o.confirmed
+      ? '<span class="pill ok">confirmed</span>'
+      : `<span class="pill">fuzzy match ${o.match_score}</span>`;
+    return `
+    <div class="opp ${i===0?'top':''}">
+      <div class="opp-head">
+        <div>${conf} <span class="pill">${o.kalshi_ticker}</span></div>
+        <div class="edge">+${o.net_edge_cents}¢ <span style="font-size:12px;color:var(--muted);font-weight:500">/ contract</span></div>
+      </div>
+      <div class="legs">
+        <div class="leg">
+          <div class="venue">Kalshi</div>
+          <div class="action">Buy ${o.kalshi_side.toUpperCase()} @ ${o.kalshi_cents}¢</div>
+          <div style="color:var(--muted);font-size:12px;margin-bottom:6px">${escapeHtml(o.kalshi_title)}</div>
+          <a href="${o.kalshi_url}" target="_blank" rel="noopener">open on Kalshi ↗</a>
+        </div>
+        <div class="leg">
+          <div class="venue">Polymarket</div>
+          <div class="action">Buy ${o.poly_side} @ $${o.poly_price.toFixed(2)}</div>
+          <div style="color:var(--muted);font-size:12px;margin-bottom:6px">${escapeHtml(o.poly_question)}</div>
+          <a href="${o.poly_url}" target="_blank" rel="noopener">open on Polymarket ↗</a>
+        </div>
+      </div>
+      <div class="meta">
+        <span>combined cost <b>$${o.gross_cost.toFixed(2)}</b> + Kalshi fee $${o.kalshi_fee.toFixed(2)}
+          → net <b style="color:var(--accent)">+${o.net_edge_cents}¢</b>
+          ${o.confirmed ? '' : '· <span class="warn">verify both resolve identically before trading</span>'}
+        </span>
+        <button class="buy" onclick='doExecute(${JSON.stringify(o).replace(/'/g,"&#39;")}, this)'>
+          Buy both legs (${lastSize})
+        </button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function doExecute(o, btn) {
+  if (!confirm(`Live order:\n\nBUY Kalshi ${o.kalshi_side.toUpperCase()} @ ${o.kalshi_cents}¢\nBUY Poly ${o.poly_side} @ $${o.poly_price.toFixed(2)}\n\n${lastSize} contracts each. This spends real money. Continue?`)) return;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin"></span>firing…';
+  try {
+    const res = await api('/api/execute', {
+      kalshi_ticker: o.kalshi_ticker, kalshi_side: o.kalshi_side,
+      kalshi_cents: o.kalshi_cents, poly_token: o.poly_token,
+      poly_side_label: o.poly_side, poly_price: o.poly_price,
+      net_edge: o.net_edge, contracts: lastSize,
+    });
+    if (res.ok) {
+      msg('info', '✓ Both legs sent. ' + (res.logs || []).join(' · '));
+      btn.innerHTML = '✓ done';
+    } else {
+      msg('err', res.error || 'execution failed');
+      btn.disabled = false; btn.innerHTML = 'retry';
+    }
+  } catch (e) {
+    msg('err', 'Execute failed: ' + e.message);
+    btn.disabled = false; btn.innerHTML = 'Buy both legs';
+  }
+}
+
+function escapeHtml(s) {
+  return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+loadStatus();
+</script>
+</body>
+</html>

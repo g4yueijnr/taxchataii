@@ -5,8 +5,68 @@ overlapping ones, and flags cross-venue arbitrage: when the **YES ask on one
 venue + the NO ask on the other is under $1.00** (e.g. under 95¢ combined),
 buying both sides locks in the difference — exactly one side pays out $1.
 
-With `--execute` it buys both legs **at the ask immediately** (buy-now)
+Comes two ways:
+- **Web app** (deploy to Railway): paste your keys in the browser, hit Scan,
+  see live arb plays with one-click "Buy both legs". See below.
+- **CLI** (`python -m arb scan`): same engine, terminal output. Further down.
+
+With execution enabled it buys both legs **at the ask immediately** (buy-now)
 using your API keys.
+
+---
+
+## 🚂 Deploy to Railway (web app)
+
+The web app is the easy button — a hosted URL where you enter keys and scan.
+
+### One-time deploy
+
+1. Push this repo to GitHub (this branch already has everything).
+2. On [railway.app](https://railway.app): **New Project → Deploy from GitHub
+   repo** → pick this repo.
+3. That's it. Railway reads `railway.json` + `Procfile`, installs
+   `requirements.txt`, and starts the server on its `$PORT`. Open the
+   generated URL.
+
+No environment variables are required to scan — market data is public. You
+type your keys into the web UI (they're held in server memory only, never
+written to disk or git).
+
+**Prefer setting keys as Railway variables** instead of typing them in the
+browser? Add any of these under the service's **Variables** tab:
+
+| Variable | Purpose |
+|---|---|
+| `KALSHI_API_KEY_ID` | Kalshi key ID |
+| `KALSHI_PRIVATE_KEY` | Kalshi RSA PEM (paste the whole thing; `\n` escapes are handled) |
+| `POLYMARKET_PRIVATE_KEY` | Polygon wallet key holding your USDC |
+| `POLYMARKET_FUNDER_ADDRESS` | Polymarket proxy/profile address |
+| `POLYMARKET_SIGNATURE_TYPE` | `1` email login, `2` browser wallet, `0` EOA |
+
+### Enabling the "Buy both legs" button
+
+Scanning works out of the box. **Live trading** needs one extra Python
+package (`py-clob-client`, which pulls heavy web3 deps — kept optional so the
+base deploy never breaks). To enable it, add its line to `requirements.txt`:
+
+```
+py-clob-client>=0.17
+```
+
+(copy it from `requirements-trading.txt`) and redeploy. Until then, the Buy
+button returns a clear "trading not enabled" error and scanning is unaffected.
+
+### Run the web app locally
+
+```bash
+pip install -r requirements.txt
+uvicorn web.app:app --reload --port 8000
+# open http://localhost:8000
+```
+
+---
+
+## CLI
 
 ## Setup
 

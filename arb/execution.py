@@ -18,8 +18,8 @@ from .polymarket import PolymarketClient
 
 
 @dataclass
-class ExecutionResult:
-    opportunity: Opportunity
+class LegResult:
+    """Result of firing both legs, independent of the Opportunity object."""
     contracts: int
     poly_order: dict | None = None
     kalshi_order: dict | None = None
@@ -30,18 +30,26 @@ class ExecutionResult:
         return self.error is None
 
 
-def execute(opp: Opportunity, kalshi: KalshiClient, poly: PolymarketClient,
-            contracts: int, log=print) -> ExecutionResult:
-    result = ExecutionResult(opportunity=opp, contracts=contracts)
-    usdc = round(contracts * opp.poly_price, 2)
-    k_cents = round(opp.kalshi_price * 100)
+@dataclass
+class ExecutionResult(LegResult):
+    opportunity: Opportunity | None = None
 
-    log(f"  -> leg 1/2 Polymarket FOK: buy {opp.poly_side_label} "
-        f"~{contracts} @ ${opp.poly_price:.2f} (${usdc} USDC)")
+
+def execute_legs(kalshi: KalshiClient, poly: PolymarketClient, *,
+                 kalshi_ticker: str, kalshi_side: str, kalshi_cents: int,
+                 poly_token: str, poly_side_label: str, poly_price: float,
+                 contracts: int, net_edge: float = 0.0,
+                 result: LegResult | None = None, log=print) -> LegResult:
+    """Fire both legs from raw primitives. Polymarket FOK first, then Kalshi."""
+    result = result or LegResult(contracts=contracts)
+    usdc = round(contracts * poly_price, 2)
+
+    log(f"  -> leg 1/2 Polymarket FOK: buy {poly_side_label} "
+        f"~{contracts} @ ${poly_price:.2f} (${usdc} USDC)")
     try:
         result.poly_order = poly.buy_at_ask(
-            opp.poly_token, usdc_amount=usdc, max_price=opp.poly_price)
-    except Exception as exc:  # noqa: BLE001 - report, don't crash the scan loop
+            poly_token, usdc_amount=usdc, max_price=poly_price)
+    except Exception as exc:  # noqa: BLE001 - report, don't crash the caller
         result.error = f"Polymarket leg failed (nothing bought): {exc}"
         log(f"  !! {result.error}")
         return result
@@ -52,11 +60,11 @@ def execute(opp: Opportunity, kalshi: KalshiClient, poly: PolymarketClient,
         log(f"  !! {result.error}")
         return result
 
-    log(f"  -> leg 2/2 Kalshi: buy {contracts}x {opp.kalshi_side.upper()} "
-        f"{opp.pair.kalshi.ticker} @ {k_cents}c")
+    log(f"  -> leg 2/2 Kalshi: buy {contracts}x {kalshi_side.upper()} "
+        f"{kalshi_ticker} @ {kalshi_cents}c")
     try:
         result.kalshi_order = kalshi.buy_at_ask(
-            opp.pair.kalshi.ticker, opp.kalshi_side, contracts, k_cents)
+            kalshi_ticker, kalshi_side, contracts, kalshi_cents)
     except Exception as exc:  # noqa: BLE001
         result.error = (
             f"WARNING: Polymarket leg FILLED but Kalshi leg failed: {exc}. "
@@ -64,6 +72,19 @@ def execute(opp: Opportunity, kalshi: KalshiClient, poly: PolymarketClient,
         log(f"  !! {result.error}")
         return result
 
-    log(f"  ✓ both legs sent — locked ~${opp.net_edge * contracts:.2f} "
-        f"({opp.net_edge * 100:.1f}c x {contracts})")
+    log(f"  ✓ both legs sent — locked ~${net_edge * contracts:.2f} "
+        f"({net_edge * 100:.1f}c x {contracts})")
+    return result
+
+
+def execute(opp: Opportunity, kalshi: KalshiClient, poly: PolymarketClient,
+            contracts: int, log=print) -> ExecutionResult:
+    result = ExecutionResult(contracts=contracts, opportunity=opp)
+    execute_legs(
+        kalshi, poly,
+        kalshi_ticker=opp.pair.kalshi.ticker, kalshi_side=opp.kalshi_side,
+        kalshi_cents=round(opp.kalshi_price * 100),
+        poly_token=opp.poly_token, poly_side_label=opp.poly_side_label,
+        poly_price=opp.poly_price, contracts=contracts,
+        net_edge=opp.net_edge, result=result, log=log)
     return result

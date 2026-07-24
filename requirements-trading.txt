@@ -1,0 +1,5 @@
+# Extra dependency for LIVE trading (the "Buy both legs" button).
+# Scanning/finding arbitrage does NOT need this. Install it (locally, or add
+# to Railway's build) only when you want to place real orders on Polymarket.
+#   pip install -r requirements-trading.txt
+py-clob-client>=0.17
