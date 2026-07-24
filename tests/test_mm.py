@@ -90,11 +90,11 @@ def test_quotes_symmetric_around_fair():
 def test_no_quotes_near_close_and_flatten():
     cfg = Config()
     eng = QuoteEngine(cfg)
-    mkt, now = make_mkt(t_left=120)
+    mkt, now = make_mkt(t_left=70)
     d = eng.compute(mkt, Book(mkt.ticker), make_spot(), 0, None, now)
     assert d.reason == "near_close" and not d.desired
 
-    mkt, now = make_mkt(t_left=80)
+    mkt, now = make_mkt(t_left=55)
     d = eng.compute(mkt, Book(mkt.ticker), make_spot(), 5, 40.0, now)
     assert not d.desired
     assert d.crosses and d.crosses[0].side == "no" and d.crosses[0].size == 5
@@ -469,7 +469,7 @@ def test_exit_never_dumps_far_through_fair():
     at fair - max_exit_slippage and simply doesn't fill against that bid."""
     cfg = Config()
     eng = QuoteEngine(cfg)
-    mkt, now = make_mkt(t_left=80, strike=0.1)
+    mkt, now = make_mkt(t_left=55, strike=0.1)
     spot = make_spot(price=0.09965, sigma_per_sec=8.3e-4)  # fair ~25
     book = Book(mkt.ticker)
     book.apply_snapshot({"yes": [[2, 500]], "no": [[70, 10]]})
@@ -545,7 +545,7 @@ def test_no_blind_exit_without_fair():
     """The DOGE 1c dump: flatten with fair unknown must HOLD, not sell."""
     cfg = Config()
     eng = QuoteEngine(cfg)
-    mkt, now = make_mkt(t_left=80)
+    mkt, now = make_mkt(t_left=55)
     spot = make_spot()
     spot.last_update = now - 10        # spot stale -> no fresh fair
     book = Book(mkt.ticker)

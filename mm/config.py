@@ -98,14 +98,16 @@ class Config:
                                           # dominates the binary's tails
 
     # --- timing guards (seconds before market close) ---------------------
-    no_quote_seconds: int = 150   # stop posting new quotes (60s settle avg + buffer)
-    flatten_seconds: int = 100    # start crossing out of inventory
-    min_open_seconds: int = 10    # don't quote a window until it's this old
+    no_quote_seconds: int = 80    # stop posting new quotes (60s settle avg + buffer)
+    flatten_seconds: int = 65     # start crossing out of inventory
+    min_open_seconds: int = 5     # don't quote a window until it's this old
 
     # --- adverse-selection circuit breakers ------------------------------
     spot_stale_seconds: float = 3.0    # pull quotes if the spot feed goes quiet
-    vol_spike_mult: float = 6.0        # pull quotes when 30s vol > mult * baseline
-    vol_spike_cooldown: float = 10.0   # seconds to stay out after a spike
+    vol_spike_mult: float = 15.0       # pull quotes when 30s vol > mult * baseline
+                                       # (high: a maker should quote through
+                                       #  normal chop, only bail on real shocks)
+    vol_spike_cooldown: float = 5.0    # seconds to stay out after a spike
     scratch_cents: int = 6             # cross out if fair moves this far against inventory
                                        # (raised: +18c scratch markouts showed we
                                        #  were realizing losses that then reverted)
