@@ -100,12 +100,12 @@ class PolymarketClient:
                 if pm:
                     markets.append(pm)
             offset += limit
-            if log:
-                log(f"  Polymarket: offset {offset}, {len(markets)} binary markets so far")
             if len(batch) < limit:
                 break
             if page_pause:
                 _t.sleep(page_pause)
+        if log:
+            log(f"poly ok: {len(markets)} binary markets kept (vol>={min_volume})")
         return markets
 
     @staticmethod

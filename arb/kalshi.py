@@ -129,6 +129,7 @@ class KalshiClient:
         markets: list[KalshiMarket] = []
         cursor = None
         page = 0
+        raw = 0
         while page < max_pages:
             params = {"limit": 1000, "status": "open"}
             if cursor:
@@ -137,10 +138,11 @@ class KalshiClient:
                 data = self._request("GET", "/markets", params=params)
             except RuntimeError as e:
                 if log:
-                    log(f"  Kalshi: stopped early after {len(markets)} "
-                        f"markets ({e})")
+                    log(f"kalshi FAIL: {e}")
                 break
-            for m in data.get("markets", []):
+            batch = data.get("markets", [])
+            raw += len(batch)
+            for m in batch:
                 if m.get("volume", 0) < min_volume:
                     continue
                 title = m.get("title") or ""
@@ -160,12 +162,13 @@ class KalshiClient:
                 ))
             cursor = data.get("cursor")
             page += 1
-            if log:
-                log(f"  Kalshi: page {page}, {len(markets)} markets so far")
             if not cursor:
                 break
             if page_pause:
                 time.sleep(page_pause)
+        if log:
+            log(f"kalshi ok: {raw} raw over {page} pages, "
+                f"{len(markets)} kept (vol>={min_volume}), authed={self.can_trade}")
         return markets
 
     def get_orderbook(self, ticker: str, depth: int = 10) -> dict:
