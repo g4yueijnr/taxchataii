@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from .engine import DesiredQuote, PaperBook
+from .engine import DesiredQuote, PaperBook, maker_rebate_cents
 
 log = logging.getLogger("pm.exec")
 

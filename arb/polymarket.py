@@ -9,12 +9,16 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 from dataclasses import dataclass, field
 
 import requests
 
-GAMMA_BASE = "https://gamma-api.polymarket.com"
-CLOB_BASE = "https://clob.polymarket.com"
+# Overridable so the same code can point at Polymarket US hosts. Set
+# PM_GAMMA_BASE / PM_CLOB_BASE in the environment (Railway Variables) if the
+# US exchange serves different endpoints.
+GAMMA_BASE = os.environ.get("PM_GAMMA_BASE", "https://gamma-api.polymarket.com")
+CLOB_BASE = os.environ.get("PM_CLOB_BASE", "https://clob.polymarket.com")
 
 
 @dataclass

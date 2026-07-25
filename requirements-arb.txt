@@ -1,0 +1,8 @@
+# Runtime deps for the cross-venue arbitrage daemon (paper mode).
+# Live execution's py-clob-client is intentionally left out of the image.
+aiohttp>=3.9
+requests>=2.31
+rapidfuzz>=3.0
+PyYAML>=6.0
+cryptography>=42.0
+python-dotenv>=1.0

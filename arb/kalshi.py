@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import base64
 import datetime as dt
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
 
 import requests
 
-KALSHI_BASE = "https://api.elections.kalshi.com"
+KALSHI_BASE = os.environ.get("KALSHI_BASE", "https://api.elections.kalshi.com")
 API_PREFIX = "/trade-api/v2"
 
 

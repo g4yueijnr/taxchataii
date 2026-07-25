@@ -8,12 +8,23 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 
 import aiohttp
 
 from .config import CLOB_BASE, DATA_BASE, GAMMA_BASE, Config
 
 log = logging.getLogger("pm.client")
+
+
+def _parse_end_date(raw) -> float | None:
+    """Gamma endDate is ISO-8601 (e.g. '2026-07-31T12:00:00Z'). -> unix secs."""
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(str(raw).replace("Z", "+00:00")).timestamp()
+    except (ValueError, TypeError):
+        return None
 
 
 @dataclass
@@ -25,6 +36,7 @@ class Market:
     volume: float          # 24h volume ($), the ranking signal
     best_bid: float | None = None
     best_ask: float | None = None
+    end_date: float | None = None   # unix seconds; market settlement deadline
 
 
 class PolyClient:
@@ -60,10 +72,20 @@ class PolyClient:
         except Exception as e:
             log.warning("discovery failed: %s", e)
             return []
+        sniper = self.cfg.mode == "sniper"
         lo, hi = self.cfg.min_mid_cents / 100.0, self.cfg.max_mid_cents / 100.0
         for m in batch or []:
             mk = self._parse(m)
             if not mk or mk.volume < self.cfg.min_volume:
+                continue
+            if sniper:
+                # Sniper only trades crypto price-target markets; the mid can
+                # legitimately sit at the extremes ("reach $X" at 4c), so we
+                # skip the two-sided-mid filter and require a parseable target.
+                from .crypto import parse_question
+                if parse_question(mk.question) is None:
+                    continue
+                markets.append(mk)
                 continue
             # Skip markets pinned at the extremes -- no real two-sided market.
             if mk.best_bid is None or mk.best_ask is None:
@@ -103,6 +125,7 @@ class PolyClient:
             volume=float(m.get("volume24hr") or m.get("volumeNum") or 0),
             best_bid=float(bb) if bb is not None else None,
             best_ask=float(ba) if ba is not None else None,
+            end_date=_parse_end_date(m.get("endDate")),
         )
 
     async def get_book(self, token_id: str) -> dict:

@@ -35,6 +35,27 @@ class Config:
     dry_run: bool = True
     sim_bankroll: float = 100.0        # paper USDC bankroll
 
+    # --- mode ------------------------------------------------------------
+    # "maker": quote both sides, capture spread (the original build).
+    # "sniper": watch live crypto spot, compute fair value for price-target
+    # markets, and TAKE stale mispriced orders before Polymarket reprices.
+    # NOTE: Polymarket US has no crypto markets, so the sniper path is dormant;
+    # cross-venue Kalshi<->Polymarket arb lives in the `arb` package instead.
+    mode: str = "maker"
+
+    # --- sniper ----------------------------------------------------------
+    # Only fire when the book price is at least this far from our computed
+    # fair value (covers taker cost + a margin so noise doesn't trigger).
+    sniper_edge_cents: float = 3.0
+    # Reject "too good to be true" gaps -- an 80c edge means the model or the
+    # spot feed is wrong, not that the market is that dumb. (Lesson from the
+    # Kalshi sniper's -79c blow-up.)
+    sniper_max_edge_cents: float = 35.0
+    sniper_size: float = 20.0          # shares per take
+    sniper_taker_fee_mult: float = 0.0 # Polymarket taker fee (0 today)
+    sniper_min_seconds: float = 30.0   # skip markets about to settle
+    sniper_max_seconds: float = 172800.0  # skip far-dated (2d): vol model weak
+
     # --- what to trade ---------------------------------------------------
     # Category tag to filter on (Gamma), e.g. "table-tennis", "sports", or
     # "" for ALL markets ranked purely by volume (default: max volume).
@@ -88,6 +109,15 @@ def load_config() -> Config:
     c = Config()
     c.dry_run = _b("DRY_RUN", c.dry_run)
     c.sim_bankroll = _f("PM_SIM_BANKROLL", c.sim_bankroll)
+    c.mode = os.environ.get("PM_MODE", c.mode).strip().lower()
+    c.sniper_edge_cents = _f("PM_SNIPER_EDGE_CENTS", c.sniper_edge_cents)
+    c.sniper_max_edge_cents = _f("PM_SNIPER_MAX_EDGE_CENTS",
+                                 c.sniper_max_edge_cents)
+    c.sniper_size = _f("PM_SNIPER_SIZE", c.sniper_size)
+    c.sniper_taker_fee_mult = _f("PM_SNIPER_TAKER_FEE_MULT",
+                                 c.sniper_taker_fee_mult)
+    c.sniper_min_seconds = _f("PM_SNIPER_MIN_SECONDS", c.sniper_min_seconds)
+    c.sniper_max_seconds = _f("PM_SNIPER_MAX_SECONDS", c.sniper_max_seconds)
     c.category = os.environ.get("PM_CATEGORY", c.category)
     c.max_markets = _i("PM_MAX_MARKETS", c.max_markets)
     c.min_volume = _f("PM_MIN_VOLUME", c.min_volume)

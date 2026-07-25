@@ -5,6 +5,7 @@ import datetime as dt
 from arb.arbitrage import find_opportunities
 from arb.kalshi import KalshiMarket, taker_fee_cents
 from arb.matching import MatchedPair, match_markets, normalize
+from arb.paper import PaperArbBook
 from arb.polymarket import PolymarketClient, PolyMarket
 
 NOW = dt.datetime(2026, 7, 7, tzinfo=dt.timezone.utc)
@@ -108,3 +109,68 @@ def test_gamma_payload_parsing():
 
 def test_normalize_strips_noise():
     assert normalize("Will the Fed cut rates?") == normalize("Fed cut rates")
+
+
+# --------------------------------------------------------------- paper book
+
+def _opp(yes_ask=40, poly_no=0.50, confirmed=False, ticker="FED-26SEP-C25"):
+    pair = MatchedPair(km(ticker=ticker, yes_ask=yes_ask),
+                       pm(no_ask=poly_no), 95.0, confirmed=confirmed)
+    opps = find_opportunities([pair], min_edge=0.01)
+    return opps[0]
+
+
+def test_paper_books_locked_edge():
+    """A hedged pair locks its net edge the instant both legs fill."""
+    book = PaperArbBook(bankroll=100.0)
+    opp = _opp(yes_ask=40, poly_no=0.50)          # ~8c edge after fee
+    fill = book.execute(opp, max_contracts=20)
+    assert fill is not None and fill.contracts == 20
+    # profit = net_edge * contracts, booked to realized immediately.
+    assert abs(book.locked_profit - opp.net_edge * 20) < 1e-9
+    assert abs(book.equity - (100.0 + opp.net_edge * 20)) < 1e-9
+    # capital tied up = cost of both legs.
+    assert abs(book.deployed - (opp.gross_cost + opp.kalshi_fee) * 20) < 1e-9
+
+
+def test_paper_takes_each_opp_once():
+    """An arb vanishes once hit — the same key never books twice (the replay
+    bug that faked P&L on the maker bot must not recur here)."""
+    book = PaperArbBook(bankroll=100.0)
+    opp = _opp()
+    assert book.execute(opp, 10) is not None
+    assert book.execute(opp, 10) is None
+    assert len(book.fills) == 1
+
+
+def test_paper_sizes_down_to_available_capital():
+    """A $100 account can't fund unlimited contracts; size caps to bankroll."""
+    book = PaperArbBook(bankroll=1.0)             # tiny bankroll
+    opp = _opp(yes_ask=40, poly_no=0.50)          # ~90c cost per pair
+    fill = book.execute(opp, max_contracts=1000)
+    assert fill is not None and fill.contracts == 1   # only one pair affordable
+    # Now fully (nearly) deployed: a second, different arb can't fund a pair.
+    opp2 = _opp(ticker="OTHER-TICKER")
+    assert book.execute(opp2, 1000) is None
+
+
+def test_paper_tracks_confirmed_profit_separately():
+    book = PaperArbBook(bankroll=100.0)
+    book.execute(_opp(confirmed=False, ticker="FUZZY-1"), 5)
+    book.execute(_opp(confirmed=True, ticker="CONF-1"), 5)
+    assert book.confirmed_profit > 0
+    assert book.confirmed_profit < book.locked_profit   # fuzzy adds on top
+
+
+def test_polymarket_endpoints_are_env_overridable(monkeypatch):
+    """PM US support: the base URLs must honor env overrides at import time."""
+    import importlib
+    monkeypatch.setenv("PM_GAMMA_BASE", "https://gamma.example.us")
+    monkeypatch.setenv("PM_CLOB_BASE", "https://clob.example.us")
+    import arb.polymarket as pmod
+    importlib.reload(pmod)
+    assert pmod.GAMMA_BASE == "https://gamma.example.us"
+    assert pmod.CLOB_BASE == "https://clob.example.us"
+    monkeypatch.delenv("PM_GAMMA_BASE")
+    monkeypatch.delenv("PM_CLOB_BASE")
+    importlib.reload(pmod)                         # restore defaults for others
