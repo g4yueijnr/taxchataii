@@ -45,6 +45,7 @@ def _status(bot) -> dict:
         "rebates_cents": round(bot.positions.rebates_cents, 1),
         "fills": bot.positions.fills,
         "feed_msgs": bot.feed.msg_count, "trades_seen": bot.feed.trade_count,
+        "rest_polls": getattr(bot, "rest_polls", 0),
         "trade_sample": bot.feed.last_message,
         "markets": mkts,
     }
@@ -81,7 +82,8 @@ def _dash(bot) -> str:
 <span class=m>/ ${s['bankroll']:.0f}</span> &nbsp;
 <span class={pcls}>{s['pnl_cents']:+.1f}c</span></div>
 <p class=m>v{s['version']} · up {s['uptime_s']/60:.0f}m · rebates +{s['rebates_cents']:.1f}c ·
-fills {s['fills']} · feed msgs {s['feed_msgs']} · trades seen {s['trades_seen']} ·
+fills {s['fills']} · feed msgs {s['feed_msgs']} · rest polls {s['rest_polls']} ·
+trades seen {s['trades_seen']} ·
 status <b class={'r' if s['status']!='ok' else 'g'}>{s['status']}</b></p>
 <p><code>ws msg: {html.escape((s['trade_sample'] or '')[:220])}</code></p>
 <h2>MARKETS (by volume) — makers are PAID a rebate here, so tight spreads can profit</h2>

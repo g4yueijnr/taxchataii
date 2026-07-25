@@ -58,18 +58,29 @@ def test_maker_rebate_is_a_positive_credit():
     assert maker_rebate_cents(50, 20, 0.0125) > maker_rebate_cents(20, 20, 0.0125)
 
 
-def test_round_trip_profits_from_spread_plus_rebate():
-    """The whole reason to move here: capture the spread AND get paid a
-    rebate, so a tight round trip is net POSITIVE (it was negative on Kalshi
-    where the maker pays a fee)."""
+def test_round_trip_profits_from_spread_with_zero_fees():
+    """The honest Polymarket edge: zero maker fees, so a 2c round trip nets
+    the full spread (on Kalshi the ~0.44c/contract maker fee ate most of
+    it). Rebate defaults to 0 -- it's upside, not the thesis."""
     cfg = Config()
+    assert cfg.maker_rebate_mult == 0.0        # honest default
     pb = PaperBook(cfg)
     pb.fill("T", "buy", 44, 20)      # buy 20 @ 44c
     pb.fill("T", "sell", 46, 20)     # sell 20 @ 46c
     assert pb.pos("T").shares == 0
-    # 2c spread * 20 shares = 40c, plus rebates on both fills, all positive.
-    assert pb.realized_cents > 40
-    assert pb.rebates_cents > 0
+    assert pb.realized_cents == 40.0           # full 2c * 20 spread, no fee drag
+    assert pb.rebates_cents == 0.0
+
+
+def test_round_trip_with_rebate_adds_upside():
+    """If a maker rebate does exist, it's credited on top of the spread."""
+    cfg = Config()
+    cfg.maker_rebate_mult = 0.0125
+    pb = PaperBook(cfg)
+    pb.fill("T", "buy", 44, 20)
+    pb.fill("T", "sell", 46, 20)
+    assert pb.realized_cents > 40.0            # spread + rebate
+    assert pb.rebates_cents > 0.0
 
 
 # ---------------------------------------------------------------- fills

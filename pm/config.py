@@ -35,10 +35,10 @@ class Config:
 
     # --- what to trade ---------------------------------------------------
     # Category tag to filter on (Gamma), e.g. "table-tennis", "sports", or
-    # "" for all. Volume is the primary ranking regardless.
-    category: str = "table-tennis"
-    max_markets: int = 12              # quote the top-N by volume
-    min_volume: float = 5000.0         # skip illiquid markets ($ traded)
+    # "" for ALL markets ranked purely by volume (default: max volume).
+    category: str = ""
+    max_markets: int = 15              # quote the top-N by volume
+    min_volume: float = 20000.0        # only real, liquid markets
     explicit_slugs: list[str] = field(default_factory=list)  # override discovery
 
     # --- quoting (prices are dollars 0-1; 1 tick = 1c) -------------------
@@ -50,10 +50,12 @@ class Config:
     join_inside: bool = True           # rest 1 tick inside the touch
 
     # --- economics -------------------------------------------------------
-    # Polymarket US: taker 0.05, MAKER REBATE -0.0125 (credited to makers).
-    # fee = mult * price * (1-price) per share; maker mult is negative = credit.
-    maker_rebate_mult: float = 0.0125  # magnitude of the maker rebate
-    taker_fee_mult: float = 0.05
+    # Makers pay ZERO fee on Polymarket (the whole reason it beats Kalshi for
+    # market-making). A maker REBATE is unconfirmed on the US exchange, so it
+    # defaults to 0 -- set PM_MAKER_REBATE_MULT>0 only if you confirm one.
+    # Edge here is spread - adverse selection, with no fee drag.
+    maker_rebate_mult: float = 0.0
+    taker_fee_mult: float = 0.0
 
     # --- risk ------------------------------------------------------------
     max_gross_dollars: float = 100.0

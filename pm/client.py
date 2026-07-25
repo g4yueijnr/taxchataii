@@ -92,3 +92,16 @@ class PolyClient:
         async with self._session.get(f"{CLOB_BASE}/book",
                                      params={"token_id": token_id}) as r:
             return await r.json()
+
+    async def get_trades(self, condition_id: str, limit: int = 50) -> list[dict]:
+        """Public recent trades for a market (data-api), for paper fills when
+        the websocket tape isn't flowing."""
+        assert self._session is not None
+        try:
+            async with self._session.get(
+                    "https://data-api.polymarket.com/trades",
+                    params={"market": condition_id, "limit": limit}) as r:
+                data = await r.json()
+                return data if isinstance(data, list) else data.get("data", [])
+        except Exception:
+            return []

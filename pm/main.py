@@ -29,6 +29,8 @@ class Bot:
         self.markets: dict[str, Market] = {}      # token -> Market
         self.positions.on_fill = self._on_booked
         self.halted = False
+        self._trade_cursor: dict[str, str] = {}   # market -> last seen trade id
+        self.rest_polls = 0
 
     @property
     def equity(self) -> float:
@@ -89,6 +91,44 @@ class Bot:
                 log.exception("discovery failed")
             await asyncio.sleep(self.cfg.discovery_interval)
 
+    async def book_poll_loop(self) -> None:
+        """Keep books hot over REST (works even if the ws format needs
+        tuning) and replay the public trade tape into the paper fills."""
+        while True:
+            await asyncio.sleep(self.cfg.book_poll_interval)
+            for token, m in list(self.markets.items()):
+                try:
+                    b = await self.client.get_book(token)
+                    self.feed.book(token).apply_snapshot(
+                        [(x["price"], x["size"]) for x in b.get("bids", [])],
+                        [(x["price"], x["size"]) for x in b.get("asks", [])])
+                    self.rest_polls += 1
+                    if self.cfg.dry_run:
+                        await self._poll_trades(token, m.condition_id)
+                    self._requote(token)
+                except Exception:
+                    pass
+
+    async def _poll_trades(self, token: str, condition_id: str) -> None:
+        trades = await self.client.get_trades(condition_id, limit=50)
+        if not trades:
+            return
+        last = self._trade_cursor.get(condition_id)
+        newest = last
+        for t in trades:                         # data-api returns newest first
+            tid = str(t.get("transactionHash") or t.get("id") or t.get("timestamp"))
+            if newest is None:
+                newest = tid
+            if last is not None and tid == last:
+                break
+            price = t.get("price")
+            size = t.get("size") or t.get("amount") or 0
+            if price is not None and last is not None:
+                from .engine import d2c
+                self.feed.trade_count += 1
+                self.om.on_trade(token, d2c(price), float(size))
+        self._trade_cursor[condition_id] = newest
+
     async def report_loop(self) -> None:
         while True:
             await asyncio.sleep(300)
@@ -108,6 +148,7 @@ class Bot:
         tasks = [
             asyncio.create_task(self.feed.run_forever(), name="feed"),
             asyncio.create_task(self.discovery_loop(), name="discovery"),
+            asyncio.create_task(self.book_poll_loop(), name="book-poll"),
             asyncio.create_task(self.report_loop(), name="report"),
         ]
         try:
