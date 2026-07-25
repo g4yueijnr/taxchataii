@@ -61,18 +61,37 @@ class PolymarketClient:
 
     # ----------------------------------------------------------- market data
 
-    def fetch_open_markets(self, min_volume: float = 0, log=None) -> list[PolyMarket]:
-        """Page through every active binary market on Gamma."""
+    def fetch_open_markets(self, min_volume: float = 0, log=None,
+                           max_pages: int = 10, page_pause: float = 0.2
+                           ) -> list[PolyMarket]:
+        """Page active binary markets on Gamma, highest 24h volume first.
+
+        Capped at ``max_pages`` and tolerant of transient rate limits: a bad
+        page ends paging and returns what we have rather than nuking the scan.
+        Ordering by volume means the first pages hold the liquid markets most
+        likely to overlap Kalshi, so the cap keeps the good ones.
+        """
+        import time as _t
         markets: list[PolyMarket] = []
         offset = 0
         limit = 500
-        while True:
-            resp = self._session.get(
-                f"{GAMMA_BASE}/markets",
-                params={"active": "true", "closed": "false",
-                        "limit": limit, "offset": offset},
-                timeout=self.timeout)
-            resp.raise_for_status()
+        for _ in range(max_pages):
+            try:
+                resp = self._session.get(
+                    f"{GAMMA_BASE}/markets",
+                    params={"active": "true", "closed": "false",
+                            "limit": limit, "offset": offset,
+                            "order": "volume24hr", "ascending": "false"},
+                    timeout=self.timeout)
+                if resp.status_code == 429:
+                    _t.sleep(1.0)
+                    continue
+                resp.raise_for_status()
+            except requests.RequestException as e:
+                if log:
+                    log(f"  Polymarket: stopped early after {len(markets)} "
+                        f"markets ({e})")
+                break
             batch = resp.json()
             if not batch:
                 break
@@ -85,6 +104,8 @@ class PolymarketClient:
                 log(f"  Polymarket: offset {offset}, {len(markets)} binary markets so far")
             if len(batch) < limit:
                 break
+            if page_pause:
+                _t.sleep(page_pause)
         return markets
 
     @staticmethod

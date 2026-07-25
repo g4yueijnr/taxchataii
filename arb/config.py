@@ -39,6 +39,11 @@ class ArbConfig:
     min_score: float = 92.0            # fuzzy title-match cutoff (0-100)
     max_days_apart: float = 3.0        # close-date agreement guard
     min_volume: float = 1000.0         # ignore thin markets on both venues
+    # How many pages to pull per venue per scan. Anonymous Kalshi has a tiny
+    # rate limit, so we cap paging (and back off on 429). Add Kalshi API keys
+    # to jump to the authenticated tier, then raise this for full coverage.
+    kalshi_max_pages: int = 10
+    poly_max_pages: int = 10
 
     # --- sizing ----------------------------------------------------------
     size: int = 20                     # contracts per opportunity (capped by
@@ -71,6 +76,8 @@ def load_config() -> ArbConfig:
     c.min_score = _f("ARB_MIN_SCORE", c.min_score)
     c.max_days_apart = _f("ARB_MAX_DAYS", c.max_days_apart)
     c.min_volume = _f("ARB_MIN_VOLUME", c.min_volume)
+    c.kalshi_max_pages = _i("ARB_KALSHI_MAX_PAGES", c.kalshi_max_pages)
+    c.poly_max_pages = _i("ARB_POLY_MAX_PAGES", c.poly_max_pages)
     c.size = _i("ARB_SIZE", c.size)
     c.book_fuzzy = _b("ARB_BOOK_FUZZY", c.book_fuzzy)
     c.matches_file = os.environ.get("ARB_MATCHES_FILE", c.matches_file)

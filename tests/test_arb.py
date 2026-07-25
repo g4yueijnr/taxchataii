@@ -162,6 +162,84 @@ def test_paper_tracks_confirmed_profit_separately():
     assert book.confirmed_profit < book.locked_profit   # fuzzy adds on top
 
 
+class _Resp:
+    def __init__(self, status, payload=None, text="", headers=None):
+        self.status_code = status
+        self._payload = payload
+        self.text = text
+        self.headers = headers or {}
+
+    def json(self):
+        return self._payload
+
+
+def test_kalshi_request_retries_on_429(monkeypatch):
+    """A transient 429 must back off and retry, not abort the scan."""
+    import arb.kalshi as kmod
+    from arb.kalshi import KalshiClient
+    monkeypatch.setattr(kmod.time, "sleep", lambda *_: None)   # no real waits
+    client = KalshiClient()
+    calls = {"n": 0}
+
+    def fake_request(method, url, **kw):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            return _Resp(429, text="slow down", headers={"Retry-After": "0"})
+        return _Resp(200, payload={"markets": [], "cursor": None})
+
+    monkeypatch.setattr(client._session, "request", fake_request)
+    out = client._request("GET", "/markets")
+    assert out == {"markets": [], "cursor": None}
+    assert calls["n"] == 3            # two 429s, then success
+
+
+def test_kalshi_fetch_returns_partial_on_persistent_429(monkeypatch):
+    """If a later page keeps 429ing, keep the markets already collected."""
+    import arb.kalshi as kmod
+    from arb.kalshi import KalshiClient
+    monkeypatch.setattr(kmod.time, "sleep", lambda *_: None)
+    client = KalshiClient()
+    state = {"page": 0}
+
+    def fake_request(method, url, **kw):
+        # First page returns one market + a cursor; then it's 429 forever.
+        if state["page"] == 0:
+            state["page"] = 1
+            return _Resp(200, payload={
+                "markets": [{"ticker": "T1", "title": "x", "volume": 9999,
+                             "yes_ask": 40, "no_ask": 62, "yes_bid": 38,
+                             "no_bid": 60, "close_time": None}],
+                "cursor": "PAGE2"})
+        return _Resp(429, text="nope", headers={})
+
+    monkeypatch.setattr(client._session, "request", fake_request)
+    markets = client.fetch_open_markets(max_pages=5, page_pause=0)
+    assert len(markets) == 1 and markets[0].ticker == "T1"   # partial, not empty
+
+
+def test_kalshi_signs_market_data_when_keyed(monkeypatch):
+    """With keys, even public GETs are signed to ride the higher rate tier.
+    (Signer stubbed — real RSA-PSS lib import panics in this sandbox but runs
+    in the deployed image; here we test the wiring: keys -> headers sent.)"""
+    from arb.kalshi import KalshiClient
+    client = KalshiClient(api_key_id="kid")
+    client._private_key = object()                    # makes can_trade True
+    assert client.can_trade
+    monkeypatch.setattr(client, "_auth_headers",
+                        lambda m, p: {"KALSHI-ACCESS-KEY": "kid",
+                                      "KALSHI-ACCESS-SIGNATURE": "sig"})
+    seen = {}
+
+    def fake_request(method, url, headers=None, **kw):
+        seen.update(headers or {})
+        return _Resp(200, payload={"markets": [], "cursor": None})
+
+    monkeypatch.setattr(client._session, "request", fake_request)
+    client._request("GET", "/markets")                # auth=False GET, but keyed
+    assert seen.get("KALSHI-ACCESS-KEY") == "kid"     # signed anyway
+    assert "KALSHI-ACCESS-SIGNATURE" in seen
+
+
 def test_polymarket_endpoints_are_env_overridable(monkeypatch):
     """PM US support: the base URLs must honor env overrides at import time."""
     import importlib

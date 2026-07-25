@@ -45,6 +45,7 @@ def _status(d) -> dict:
         "fills": len(b.fills),
         "scans": d.scans,
         "last_scan_age_s": round(now - d.last_scan, 1) if d.last_scan else None,
+        "kalshi_authed": d.kalshi_authed,
         "kalshi_markets": d.k_count, "poly_markets": d.p_count,
         "matched_pairs": d.pair_count, "confirmed_pairs": d.confirmed_count,
         "live_opps": len(d.last_opps),
@@ -93,6 +94,7 @@ status <b class={'g' if s['status']=='ok' else 'r'}>{s['status']}</b></p>
 <p class=m>markets: Kalshi {s['kalshi_markets']} · Poly {s['poly_markets']} ·
 matched {s['matched_pairs']} ({s['confirmed_pairs']} confirmed) ·
 live opps {s['live_opps']}</p>
+{"" if s['kalshi_authed'] else "<p class=y>⚠ No Kalshi API keys — running on the anonymous rate tier (429s cap how many markets each scan can pull). Add KALSHI_API_KEY_ID + KALSHI_PRIVATE_KEY_PATH in Railway Variables for full coverage.</p>"}
 {f"<p><code>last error: {html.escape(str(s['last_error'])[:200])}</code></p>" if s['last_error'] else ""}
 <h2>LIVE OPPORTUNITIES (edge after Kalshi fees) — FUZZY = unverified settlement, treat as a lead not a lock</h2>
 <table><tr><th>matched market</th><th>Kalshi leg</th><th>Poly leg</th><th>edge</th></tr>

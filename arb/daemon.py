@@ -54,6 +54,7 @@ class ArbDaemon:
         self.kalshi = KalshiClient(api_key_id=os.getenv("KALSHI_API_KEY_ID"),
                                    private_key_pem=pem)
         self.poly = PolymarketClient()
+        self.kalshi_authed = self.kalshi.can_trade   # on the higher rate tier?
         # dashboard state
         self.scans = 0
         self.last_scan = 0.0
@@ -66,8 +67,12 @@ class ArbDaemon:
 
     def _scan_sync(self):
         """Blocking full scan (runs in a thread). Returns (pairs, opps)."""
-        k = self.kalshi.fetch_open_markets(min_volume=int(self.cfg.min_volume))
-        p = self.poly.fetch_open_markets(min_volume=self.cfg.min_volume)
+        k = self.kalshi.fetch_open_markets(
+            min_volume=int(self.cfg.min_volume),
+            max_pages=self.cfg.kalshi_max_pages, log=log.debug)
+        p = self.poly.fetch_open_markets(
+            min_volume=self.cfg.min_volume,
+            max_pages=self.cfg.poly_max_pages, log=log.debug)
         self.k_count, self.p_count = len(k), len(p)
         pairs = match_markets(k, p, min_score=self.cfg.min_score,
                               max_days_apart=self.cfg.max_days_apart,

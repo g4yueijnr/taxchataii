@@ -88,26 +88,58 @@ class KalshiClient:
     def _request(self, method: str, path: str, *, auth: bool = False,
                  params: dict | None = None, json_body: dict | None = None) -> dict:
         full_path = API_PREFIX + path
-        headers = self._auth_headers(method, full_path) if auth else {}
-        resp = self._session.request(
-            method, self.base_url + full_path,
-            params=params, json=json_body, headers=headers, timeout=self.timeout)
-        if resp.status_code >= 400:
-            raise RuntimeError(f"Kalshi {method} {path} -> {resp.status_code}: {resp.text[:500]}")
-        return resp.json()
+        # Sign whenever we hold keys, not just for trading: Kalshi's
+        # authenticated rate-limit tier is far higher than the anonymous one,
+        # and signing a public GET costs nothing. This is what keeps a full
+        # market scan from tripping 429s.
+        headers = (self._auth_headers(method, full_path)
+                   if (auth or self.can_trade) else {})
+        backoff = 0.5
+        last = ""
+        for _ in range(5):
+            resp = self._session.request(
+                method, self.base_url + full_path,
+                params=params, json=json_body, headers=headers,
+                timeout=self.timeout)
+            if resp.status_code == 429 or resp.status_code >= 500:
+                # Respect Retry-After when present, else exponential backoff.
+                try:
+                    wait = float(resp.headers.get("Retry-After", "")) or backoff
+                except ValueError:
+                    wait = backoff
+                last = f"{resp.status_code}: {resp.text[:200]}"
+                time.sleep(min(wait, 8.0))
+                backoff = min(backoff * 2, 8.0)
+                continue
+            if resp.status_code >= 400:
+                raise RuntimeError(
+                    f"Kalshi {method} {path} -> {resp.status_code}: {resp.text[:500]}")
+            return resp.json()
+        raise RuntimeError(f"Kalshi {method} {path} rate-limited after retries ({last})")
 
     # ----------------------------------------------------------- market data
 
-    def fetch_open_markets(self, min_volume: int = 0, log=None) -> list[KalshiMarket]:
-        """Page through every open market on the exchange."""
+    def fetch_open_markets(self, min_volume: int = 0, log=None,
+                           max_pages: int = 10, page_pause: float = 0.25
+                           ) -> list[KalshiMarket]:
+        """Page through open markets. Capped at ``max_pages`` and returns
+        whatever it has if a page hard-fails (rate limits shouldn't zero out a
+        whole scan). Add Kalshi keys to lift the rate ceiling and raise the cap.
+        """
         markets: list[KalshiMarket] = []
         cursor = None
         page = 0
-        while True:
+        while page < max_pages:
             params = {"limit": 1000, "status": "open"}
             if cursor:
                 params["cursor"] = cursor
-            data = self._request("GET", "/markets", params=params)
+            try:
+                data = self._request("GET", "/markets", params=params)
+            except RuntimeError as e:
+                if log:
+                    log(f"  Kalshi: stopped early after {len(markets)} "
+                        f"markets ({e})")
+                break
             for m in data.get("markets", []):
                 if m.get("volume", 0) < min_volume:
                     continue
@@ -132,6 +164,8 @@ class KalshiClient:
                 log(f"  Kalshi: page {page}, {len(markets)} markets so far")
             if not cursor:
                 break
+            if page_pause:
+                time.sleep(page_pause)
         return markets
 
     def get_orderbook(self, ticker: str, depth: int = 10) -> dict:
