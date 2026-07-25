@@ -240,6 +240,28 @@ def test_kalshi_signs_market_data_when_keyed(monkeypatch):
     assert "KALSHI-ACCESS-SIGNATURE" in seen
 
 
+def test_kalshi_pem_loads_inline_with_unescaped_newlines(monkeypatch):
+    """The user's key lives in KALSHI_PRIVATE_KEY (inline PEM), not a file —
+    read it and turn escaped \\n back into real newlines."""
+    from arb.daemon import _load_kalshi_pem
+    monkeypatch.delenv("KALSHI_PRIVATE_KEY_PATH", raising=False)
+    monkeypatch.setenv("KALSHI_PRIVATE_KEY",
+                       "-----BEGIN PRIVATE KEY-----\\nABC\\n-----END PRIVATE KEY-----")
+    pem = _load_kalshi_pem()
+    assert pem == b"-----BEGIN PRIVATE KEY-----\nABC\n-----END PRIVATE KEY-----"
+
+
+def test_kalshi_pem_falls_back_to_path(monkeypatch, tmp_path):
+    from arb.daemon import _load_kalshi_pem
+    monkeypatch.delenv("KALSHI_PRIVATE_KEY", raising=False)
+    f = tmp_path / "key.pem"
+    f.write_bytes(b"PEMBYTES")
+    monkeypatch.setenv("KALSHI_PRIVATE_KEY_PATH", str(f))
+    assert _load_kalshi_pem() == b"PEMBYTES"
+    monkeypatch.delenv("KALSHI_PRIVATE_KEY_PATH")
+    assert _load_kalshi_pem() is None
+
+
 def test_polymarket_endpoints_are_env_overridable(monkeypatch):
     """PM US support: the base URLs must honor env overrides at import time."""
     import importlib

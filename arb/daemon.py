@@ -27,6 +27,18 @@ from .polymarket import PolymarketClient
 log = logging.getLogger("arb")
 
 
+def _load_kalshi_pem() -> bytes | None:
+    """Kalshi RSA private key from env: inline PEM (KALSHI_PRIVATE_KEY, with
+    escaped \\n unescaped) or a file path (KALSHI_PRIVATE_KEY_PATH)."""
+    inline = os.environ.get("KALSHI_PRIVATE_KEY", "")
+    if inline.strip():
+        return inline.replace("\\n", "\n").encode()
+    path = os.environ.get("KALSHI_PRIVATE_KEY_PATH", "")
+    if path and Path(path).exists():
+        return Path(path).read_bytes()
+    return None
+
+
 def _load_manual(path: str) -> dict[str, str]:
     p = Path(path)
     if not p.exists():
@@ -46,11 +58,11 @@ class ArbDaemon:
         self.started_at = time.time()
         self.book = PaperArbBook(bankroll=cfg.bankroll)
         self.manual = _load_manual(cfg.matches_file)
-        # Market-data only -- credentials (if present) let Kalshi's orderbook
-        # endpoint respond, but we never place an order from the daemon.
-        key_path = os.getenv("KALSHI_PRIVATE_KEY_PATH")
-        pem = (Path(key_path).read_bytes()
-               if key_path and Path(key_path).exists() else None)
+        # Credentials lift us to Kalshi's higher rate tier (we sign every GET);
+        # we never place an order from the daemon. Railway-friendly: accept the
+        # PEM inline in KALSHI_PRIVATE_KEY (unescaping \n) or as a file path --
+        # same convention as the mm bot, so existing vars just work.
+        pem = _load_kalshi_pem()
         self.kalshi = KalshiClient(api_key_id=os.getenv("KALSHI_API_KEY_ID"),
                                    private_key_pem=pem)
         self.poly = PolymarketClient()
