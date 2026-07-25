@@ -88,6 +88,21 @@ class ClobFeed:
             await self._handle_event(ev)
 
     async def _handle_event(self, ev: dict) -> None:
+        # Real Polymarket market-channel format: a message with a
+        # "price_changes" list, each entry {asset_id, price, size, side}.
+        if "price_changes" in ev:
+            for ch in ev["price_changes"]:
+                tok = ch.get("asset_id")
+                if not tok:
+                    continue
+                book = self.book(tok)
+                side = "bid" if str(ch.get("side", "")).lower() in (
+                    "buy", "bid") else "ask"
+                book.set_level(side, d2c(float(ch.get("price", 0))),
+                               float(ch.get("size", 0)))
+                if self.on_book:
+                    await self.on_book(tok)
+            return
         et = ev.get("event_type") or ev.get("type")
         token = ev.get("asset_id") or ev.get("market") or ev.get("token_id")
         if not token:

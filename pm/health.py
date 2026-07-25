@@ -86,7 +86,7 @@ fills {s['fills']} · feed msgs {s['feed_msgs']} · rest polls {s['rest_polls']}
 trades seen {s['trades_seen']} ·
 status <b class={'r' if s['status']!='ok' else 'g'}>{s['status']}</b></p>
 <p><code>ws msg: {html.escape((s['trade_sample'] or '')[:220])}</code></p>
-<h2>MARKETS (by volume) — makers are PAID a rebate here, so tight spreads can profit</h2>
+<h2>MARKETS (by 24h volume) — zero maker fees, so the full spread is edge</h2>
 <table><tr><th>market</th><th>vol</th><th>book bid/ask</th><th>OUR bid/ask</th>
 <th>pos</th><th>pnl</th></tr>
 {rows or '<tr><td colspan=6 class=m>discovering markets…</td></tr>'}</table>

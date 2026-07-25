@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 import aiohttp
 
-from .config import CLOB_BASE, GAMMA_BASE, Config
+from .config import CLOB_BASE, DATA_BASE, GAMMA_BASE, Config
 
 log = logging.getLogger("pm.client")
 
@@ -22,7 +22,9 @@ class Market:
     question: str
     slug: str
     yes_token: str
-    volume: float
+    volume: float          # 24h volume ($), the ranking signal
+    best_bid: float | None = None
+    best_ask: float | None = None
 
 
 class PolyClient:
@@ -44,8 +46,10 @@ class PolyClient:
         The YES token is the one we quote; NO is just 1 - YES on a merged CLOB.
         """
         assert self._session is not None
+        # Rank by RECENT (24h) volume so we get markets trading NOW, not dead
+        # longshots with huge lifetime volume pinned at 1-2c.
         params = {"active": "true", "closed": "false", "limit": 500,
-                  "order": "volumeNum", "ascending": "false"}
+                  "order": "volume24hr", "ascending": "false"}
         if self.cfg.category:
             params["tag_slug"] = self.cfg.category
         markets: list[Market] = []
@@ -56,10 +60,18 @@ class PolyClient:
         except Exception as e:
             log.warning("discovery failed: %s", e)
             return []
+        lo, hi = self.cfg.min_mid_cents / 100.0, self.cfg.max_mid_cents / 100.0
         for m in batch or []:
             mk = self._parse(m)
-            if mk and mk.volume >= self.cfg.min_volume:
-                markets.append(mk)
+            if not mk or mk.volume < self.cfg.min_volume:
+                continue
+            # Skip markets pinned at the extremes -- no real two-sided market.
+            if mk.best_bid is None or mk.best_ask is None:
+                continue
+            mid = (mk.best_bid + mk.best_ask) / 2
+            if not (lo <= mid <= hi):
+                continue
+            markets.append(mk)
         if self.cfg.explicit_slugs:
             markets = [m for m in markets if m.slug in self.cfg.explicit_slugs]
         markets.sort(key=lambda m: m.volume, reverse=True)
@@ -78,13 +90,19 @@ class PolyClient:
             return None
         if not m.get("enableOrderBook", True):
             return None
+        if m.get("acceptingOrders") is False:
+            return None
         yes_idx = 0 if outcomes[0].lower() == "yes" else 1
+        bb = m.get("bestBid")
+        ba = m.get("bestAsk")
         return Market(
             condition_id=m.get("conditionId", ""),
             question=m.get("question") or "",
             slug=m.get("slug") or "",
             yes_token=tokens[yes_idx],
-            volume=float(m.get("volumeNum") or m.get("volume") or 0),
+            volume=float(m.get("volume24hr") or m.get("volumeNum") or 0),
+            best_bid=float(bb) if bb is not None else None,
+            best_ask=float(ba) if ba is not None else None,
         )
 
     async def get_book(self, token_id: str) -> dict:
@@ -99,7 +117,7 @@ class PolyClient:
         assert self._session is not None
         try:
             async with self._session.get(
-                    "https://data-api.polymarket.com/trades",
+                    f"{DATA_BASE}/trades",
                     params={"market": condition_id, "limit": limit}) as r:
                 data = await r.json()
                 return data if isinstance(data, list) else data.get("data", [])

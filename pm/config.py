@@ -21,11 +21,13 @@ def _i(name: str, default: int) -> int:
     return int(v) if v not in (None, "") else default
 
 
-# Polymarket CLOB / Gamma endpoints. Point these at the US exchange hosts via
-# env when going live there; public market data works keyless for paper.
-GAMMA_BASE = "https://gamma-api.polymarket.com"
-CLOB_BASE = "https://clob.polymarket.com"
-CLOB_WS = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
+# Polymarket CLOB / Gamma endpoints. Overridable via env (PM_GAMMA_BASE,
+# PM_CLOB_BASE, PM_CLOB_WS, PM_DATA_BASE) to point at the US exchange hosts.
+GAMMA_BASE = os.environ.get("PM_GAMMA_BASE", "https://gamma-api.polymarket.com")
+CLOB_BASE = os.environ.get("PM_CLOB_BASE", "https://clob.polymarket.com")
+CLOB_WS = os.environ.get(
+    "PM_CLOB_WS", "wss://ws-subscriptions-clob.polymarket.com/ws/market")
+DATA_BASE = os.environ.get("PM_DATA_BASE", "https://data-api.polymarket.com")
 
 
 @dataclass
@@ -37,8 +39,12 @@ class Config:
     # Category tag to filter on (Gamma), e.g. "table-tennis", "sports", or
     # "" for ALL markets ranked purely by volume (default: max volume).
     category: str = ""
-    max_markets: int = 15              # quote the top-N by volume
-    min_volume: float = 20000.0        # only real, liquid markets
+    max_markets: int = 15              # quote the top-N by RECENT (24h) volume
+    min_volume: float = 5000.0         # min 24h volume ($) — actively trading
+    # Only make markets that aren't pinned at the extremes (dead longshots
+    # like "Jesus returns" sit at 1-2c with no real two-sided market).
+    min_mid_cents: int = 8
+    max_mid_cents: int = 92
     explicit_slugs: list[str] = field(default_factory=list)  # override discovery
 
     # --- quoting (prices are dollars 0-1; 1 tick = 1c) -------------------
@@ -85,6 +91,8 @@ def load_config() -> Config:
     c.category = os.environ.get("PM_CATEGORY", c.category)
     c.max_markets = _i("PM_MAX_MARKETS", c.max_markets)
     c.min_volume = _f("PM_MIN_VOLUME", c.min_volume)
+    c.min_mid_cents = _i("PM_MIN_MID_CENTS", c.min_mid_cents)
+    c.max_mid_cents = _i("PM_MAX_MID_CENTS", c.max_mid_cents)
     slugs = os.environ.get("PM_SLUGS", "")
     if slugs:
         c.explicit_slugs = [s.strip() for s in slugs.split(",") if s.strip()]
