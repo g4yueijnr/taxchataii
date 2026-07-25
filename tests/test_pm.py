@@ -139,3 +139,38 @@ def test_improving_price_is_first_in_line():
     om.set_quote("T", DesiredQuote(44, 46, 20, 20), book)     # nothing at 44/46
     assert om.on_trade("T", 44, 20)               # first in line -> fills
     assert pb.pos("T").shares == 20
+
+
+def test_trade_cursor_never_replays(tmp_path):
+    """The faked-P&L bug: the trade poll re-replayed the same trades every
+    cycle. The cursor must advance so each trade fills us at most once."""
+    import asyncio
+    from pm.main import Bot
+    from pm.client import Market
+    from pm.engine import DesiredQuote
+
+    cfg = Config()
+    cfg.data_dir = str(tmp_path)
+    cfg.dry_run = True
+    bot = Bot(cfg)
+    token, cond = "T", "C"
+    bot.markets = {token: Market(cond, "q", "slug", token, 10000.0)}
+    bot.om.set_quote(token, DesiredQuote(44, 48, 100, 100), None)
+
+    state = {"trades": [{"transactionHash": "t3", "price": 0.43, "size": 5},
+                        {"transactionHash": "t2", "price": 0.43, "size": 5},
+                        {"transactionHash": "t1", "price": 0.43, "size": 5}]}
+
+    async def fake_trades(c, limit=50):
+        return list(state["trades"])
+    bot.client.get_trades = fake_trades
+
+    asyncio.run(bot._poll_trades(token, cond))    # first poll: set cursor only
+    assert bot.positions.fills == 0
+    asyncio.run(bot._poll_trades(token, cond))    # same trades -> NO replay
+    assert bot.positions.fills == 0
+    state["trades"] = [{"transactionHash": "t4", "price": 0.43, "size": 5}] \
+        + state["trades"]
+    asyncio.run(bot._poll_trades(token, cond))    # only t4 is new -> 1 fill
+    assert bot.positions.fills == 1
+    bot.journal.close()

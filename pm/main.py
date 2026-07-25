@@ -113,21 +113,29 @@ class Bot:
         trades = await self.client.get_trades(condition_id, limit=50)
         if not trades:
             return
+
+        def tid(t) -> str:
+            return str(t.get("transactionHash") or t.get("id")
+                       or t.get("timestamp"))
+
         last = self._trade_cursor.get(condition_id)
-        newest = last
-        for t in trades:                         # data-api returns newest first
-            tid = str(t.get("transactionHash") or t.get("id") or t.get("timestamp"))
-            if newest is None:
-                newest = tid
-            if last is not None and tid == last:
+        # data-api returns newest first: the cursor ALWAYS advances to the
+        # newest trade so we never replay history (the bug that faked the P&L).
+        self._trade_cursor[condition_id] = tid(trades[0])
+        if last is None:
+            return                               # first poll: just set cursor
+        fresh = []
+        for t in trades:
+            if tid(t) == last:
                 break
+            fresh.append(t)
+        from .engine import d2c
+        for t in reversed(fresh):                # replay oldest-first, once
             price = t.get("price")
             size = t.get("size") or t.get("amount") or 0
-            if price is not None and last is not None:
-                from .engine import d2c
+            if price is not None:
                 self.feed.trade_count += 1
                 self.om.on_trade(token, d2c(price), float(size))
-        self._trade_cursor[condition_id] = newest
 
     async def report_loop(self) -> None:
         while True:
