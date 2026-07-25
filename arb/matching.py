@@ -17,6 +17,8 @@ from .kalshi import KalshiMarket
 from .polymarket import PolyMarket
 
 _NUM_RE = re.compile(r"\d+(?:\.\d+)?")
+_K_RE = re.compile(r"(\d+(?:\.\d+)?)\s*k\b")
+_M_RE = re.compile(r"(\d+(?:\.\d+)?)\s*m\b")
 
 _STOPWORDS = {
     "will", "the", "a", "an", "in", "on", "at", "by", "be", "to", "of",
@@ -32,8 +34,18 @@ def normalize(title: str) -> str:
 
 
 def _numbers(title: str) -> set[str]:
-    return {n.rstrip("0").rstrip(".") if "." in n else n
-            for n in _NUM_RE.findall(title)}
+    """Canonical numeric tokens, robust to the ways two venues write the same
+    threshold: '$120,000' == '120k', '1.5M' == '1500000'. Commas stripped,
+    k/M suffixes expanded, then each number canonicalized to an int/float
+    string so the guard compares values, not spellings."""
+    t = title.lower().replace(",", "")
+    t = _K_RE.sub(lambda m: str(int(float(m.group(1)) * 1000)), t)
+    t = _M_RE.sub(lambda m: str(int(float(m.group(1)) * 1_000_000)), t)
+    nums: set[str] = set()
+    for n in _NUM_RE.findall(t):
+        f = float(n)
+        nums.add(str(int(f)) if f == int(f) else str(f))
+    return nums
 
 
 @dataclass

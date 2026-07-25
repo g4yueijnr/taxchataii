@@ -36,13 +36,18 @@ class ArbConfig:
     # Net edge in DOLLARS after Kalshi fees. 0.02 => combined cost of the two
     # legs is under ~98c, so each hedged pair locks >=2c toward the $1 payout.
     min_edge: float = 0.02
-    min_score: float = 92.0            # fuzzy title-match cutoff (0-100)
+    min_score: float = 88.0            # fuzzy title-match cutoff (0-100); the
+    #                                    number + date guards catch false pairs
     max_days_apart: float = 3.0        # close-date agreement guard
-    min_volume: float = 1000.0         # ignore thin markets on both venues
-    # How many pages to pull per venue per scan. Anonymous Kalshi has a tiny
-    # rate limit, so we cap paging (and back off on 429). Add Kalshi API keys
-    # to jump to the authenticated tier, then raise this for full coverage.
-    kalshi_max_pages: int = 10
+    min_volume: float = 1000.0         # Polymarket liquidity floor (ranked desc)
+    # Kalshi has thousands of dead markets and its API can't sort by volume, so
+    # a volume floor pre-match would drop the very markets that overlap the
+    # liquid Poly side. Keep ALL Kalshi markets (0) and let the match + the Poly
+    # volume floor find the liquid, tradeable overlaps.
+    kalshi_min_volume: int = 0
+    # How many pages to pull per venue per scan. Authenticated Kalshi lifts the
+    # rate ceiling, so we pull the whole board (Kalshi has ~20-40k open markets).
+    kalshi_max_pages: int = 45
     poly_max_pages: int = 10
 
     # --- sizing ----------------------------------------------------------
@@ -76,6 +81,7 @@ def load_config() -> ArbConfig:
     c.min_score = _f("ARB_MIN_SCORE", c.min_score)
     c.max_days_apart = _f("ARB_MAX_DAYS", c.max_days_apart)
     c.min_volume = _f("ARB_MIN_VOLUME", c.min_volume)
+    c.kalshi_min_volume = _i("ARB_KALSHI_MIN_VOLUME", c.kalshi_min_volume)
     c.kalshi_max_pages = _i("ARB_KALSHI_MAX_PAGES", c.kalshi_max_pages)
     c.poly_max_pages = _i("ARB_POLY_MAX_PAGES", c.poly_max_pages)
     c.size = _i("ARB_SIZE", c.size)

@@ -111,6 +111,29 @@ def test_normalize_strips_noise():
     assert normalize("Will the Fed cut rates?") == normalize("Fed cut rates")
 
 
+def test_number_guard_treats_120k_and_120000_as_equal():
+    """The guard must compare VALUES: '$120,000' and '120k' are the same
+    threshold, so a crypto price market matches across venues."""
+    from arb.matching import _numbers
+    assert _numbers("Bitcoin above $120,000 in 2026") \
+        == _numbers("Will BTC hit 120k in 2026")
+    # 1.5M vs 1500000
+    assert _numbers("company worth $1.5M") == _numbers("worth 1500000")
+    # genuinely different thresholds still differ
+    assert _numbers("BTC to 120k") != _numbers("BTC to 130k")
+
+
+def test_price_market_matches_across_venues():
+    """End to end: a BTC price market with different wording/number formats on
+    each venue now survives the number guard and matches."""
+    k = km(ticker="KXBTC-26-120K", title="Will Bitcoin be above $120,000 in 2026?",
+           yes_ask=45, no_ask=57)
+    p = pm(question="Bitcoin above 120k in 2026?", yes_ask=0.44, no_ask=0.55,
+           cond="0xbtc")
+    pairs = match_markets([k], [p], min_score=85)
+    assert len(pairs) == 1
+
+
 # --------------------------------------------------------------- paper book
 
 def _opp(yes_ask=40, poly_no=0.50, confirmed=False, ticker="FED-26SEP-C25"):

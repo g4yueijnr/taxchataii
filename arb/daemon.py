@@ -84,7 +84,7 @@ class ArbDaemon:
         knotes: list[str] = []
         pnotes: list[str] = []
         k = self.kalshi.fetch_open_markets(
-            min_volume=int(self.cfg.min_volume),
+            min_volume=self.cfg.kalshi_min_volume,
             max_pages=self.cfg.kalshi_max_pages, log=knotes.append)
         p = self.poly.fetch_open_markets(
             min_volume=self.cfg.min_volume,
