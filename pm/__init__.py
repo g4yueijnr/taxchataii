@@ -11,4 +11,4 @@ Paper-trades by default (public CLOB data, no keys needed) until you flip
 DRY_RUN=false.
 """
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"

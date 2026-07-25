@@ -66,7 +66,7 @@ class Bot:
             return
         book = self.feed.book(token)
         pos = self.positions.pos(token).shares
-        self.om.set_quote(token, self.strategy.compute(book, pos))
+        self.om.set_quote(token, self.strategy.compute(book, pos), book)
 
     async def discovery_loop(self) -> None:
         while True:

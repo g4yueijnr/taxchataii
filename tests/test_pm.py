@@ -108,3 +108,34 @@ def test_no_fill_inside_the_spread():
     om.set_quote("T", DesiredQuote(bid=44, ask=48, bid_size=20, ask_size=20))
     assert not om.on_trade("T", 46, 20)           # 46 is between our quotes
     assert pb.pos("T").shares == 0
+
+
+def test_queue_ahead_delays_fill():
+    """Realistic 'we're one trader in line': 500 shares rest at our price
+    ahead of us, so trades fill THEM first — we only fill once the queue
+    ahead is consumed. This is the fix for the fantasy fill rate."""
+    cfg = Config()
+    pb = PaperBook(cfg)
+    om = PaperOrderManager(cfg, pb)
+    from pm.engine import DesiredQuote
+    book = make_book(bids=[(0.44, 500)], asks=[(0.48, 500)])
+    om.set_quote("T", DesiredQuote(44, 48, 20, 20), book)
+    assert not om.on_trade("T", 44, 100)          # all to the 500 ahead
+    assert pb.pos("T").shares == 0
+    om.on_trade("T", 44, 400)                     # queue now exhausted
+    assert pb.pos("T").shares == 0
+    assert om.on_trade("T", 44, 50)               # now it's our turn
+    assert pb.pos("T").shares == 20               # capped at our resting size
+
+
+def test_improving_price_is_first_in_line():
+    """If we improve to a fresh best price (nothing resting there), queue is
+    0 — we're first and fill immediately (but that's the adverse side)."""
+    cfg = Config()
+    pb = PaperBook(cfg)
+    om = PaperOrderManager(cfg, pb)
+    from pm.engine import DesiredQuote
+    book = make_book(bids=[(0.40, 500)], asks=[(0.50, 500)])  # our 44 is inside
+    om.set_quote("T", DesiredQuote(44, 46, 20, 20), book)     # nothing at 44/46
+    assert om.on_trade("T", 44, 20)               # first in line -> fills
+    assert pb.pos("T").shares == 20
